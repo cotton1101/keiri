@@ -137,6 +137,7 @@ export const taxFilings = mysqlTable("tax_filings", {
   netIncome: decimal("netIncome", { precision: 12, scale: 0 }).notNull().default("0"),
   specialDeduction: decimal("specialDeduction", { precision: 12, scale: 0 }).notNull().default("0"),
   taxableIncome: decimal("taxableIncome", { precision: 12, scale: 0 }).notNull().default("0"),
+  incomeTax: decimal("incomeTax", { precision: 12, scale: 0 }).notNull().default("0"),
   breakdownData: json("breakdownData"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -219,3 +220,23 @@ export const subscriptions = mysqlTable("subscriptions", {
 
 export type Subscription = typeof subscriptions.$inferSelect;
 export type InsertSubscription = typeof subscriptions.$inferInsert;
+
+/**
+ * Email logs - メール送信履歴
+ */
+export const emailLogs = mysqlTable("email_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  invoiceId: int("invoiceId"),
+  toEmail: varchar("toEmail", { length: 320 }).notNull(),
+  toName: varchar("toName", { length: 255 }).notNull().default(""),
+  subject: varchar("subject", { length: 500 }).notNull(),
+  body: text("body"),
+  documentType: mysqlEnum("documentType", ["invoice", "quote", "order"]).notNull().default("invoice"),
+  status: mysqlEnum("emailStatus", ["sent", "failed", "pending"]).notNull().default("pending"),
+  sentAt: timestamp("sentAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type EmailLog = typeof emailLogs.$inferSelect;
+export type InsertEmailLog = typeof emailLogs.$inferInsert;

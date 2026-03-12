@@ -35,6 +35,10 @@ import {
   FileCheck,
   Upload,
   Repeat,
+  Calculator,
+  Shield,
+  Users,
+  Crown,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -42,7 +46,7 @@ import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
 
 const mainMenuItems = [
-  { icon: LayoutDashboard, label: "ダッシュボード", path: "/", group: "main" },
+  { icon: LayoutDashboard, label: "ダッシュボード", path: "/dashboard", group: "main" },
   { icon: ArrowLeftRight, label: "取引管理", path: "/transactions", group: "main" },
   { icon: Repeat, label: "固定費・定期", path: "/recurring", group: "main" },
   { icon: BookOpen, label: "勘定科目", path: "/accounts", group: "main" },
@@ -51,6 +55,7 @@ const mainMenuItems = [
 const reportMenuItems = [
   { icon: BarChart3, label: "レポート", path: "/reports", group: "report" },
   { icon: FileCheck, label: "確定申告", path: "/tax-filing", group: "report" },
+  { icon: Calculator, label: "税金シミュレーション", path: "/tax-simulator", group: "report" },
   { icon: FileText, label: "請求書", path: "/invoices", group: "report" },
 ];
 
@@ -60,7 +65,13 @@ const systemMenuItems = [
   { icon: Settings, label: "設定", path: "/settings", group: "system" },
 ];
 
-const allMenuItems = [...mainMenuItems, ...reportMenuItems, ...systemMenuItems];
+const adminMenuItems = [
+  { icon: Shield, label: "管理者ダッシュボード", path: "/admin", group: "admin" },
+  { icon: Users, label: "ユーザー管理", path: "/admin/users", group: "admin" },
+  { icon: Crown, label: "サブスク管理", path: "/admin/subscriptions", group: "admin" },
+];
+
+const allMenuItems = [...mainMenuItems, ...reportMenuItems, ...systemMenuItems, ...adminMenuItems];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 260;
@@ -87,36 +98,8 @@ export default function DashboardLayout({
   }
 
   if (!user) {
-    return (
-      <div className="flex items-center justify-center min-h-screen animated-gradient">
-        <div className="flex flex-col items-center gap-8 p-10 max-w-md w-full glass-card rounded-2xl shadow-2xl">
-          <div className="flex flex-col items-center gap-3">
-            <div className="h-16 w-16 rounded-2xl bg-primary flex items-center justify-center glow-primary shadow-lg">
-              <svg className="h-8 w-8 text-primary-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
-              </svg>
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight gradient-text">
-              カンタン経理
-            </h1>
-            <p className="text-sm text-muted-foreground text-center max-w-xs leading-relaxed">
-              個人事業主のための、シンプルで美しい経理システム。確定申告もこれひとつで。
-            </p>
-          </div>
-          <Button
-            onClick={() => { window.location.href = getLoginUrl(); }}
-            size="lg"
-            className="w-full glow-primary font-semibold text-base h-12 rounded-xl"
-          >
-            ログインして始める
-          </Button>
-          <p className="text-xs text-muted-foreground">
-            無料プランで今すぐスタート
-          </p>
-        </div>
-      </div>
-    );
+    window.location.href = getLoginUrl();
+    return <DashboardLayoutSkeleton />;
   }
 
   return (
@@ -147,6 +130,7 @@ function DashboardLayoutContent({
   const sidebarRef = useRef<HTMLDivElement>(null);
   const activeMenuItem = allMenuItems.find((item) => item.path === location);
   const isMobile = useIsMobile();
+  const isAdmin = user?.role === "admin";
 
   useEffect(() => {
     if (isCollapsed) setIsResizing(false);
@@ -188,7 +172,7 @@ function DashboardLayoutContent({
       {label && isCollapsed && <div className="h-3" />}
       <SidebarMenu className="space-y-0.5 px-2">
         {items.map((item) => {
-          const isActive = location === item.path;
+          const isActive = location === item.path || (item.path !== "/dashboard" && location.startsWith(item.path + "/"));
           return (
             <SidebarMenuItem key={item.path}>
               <SidebarMenuButton
@@ -244,6 +228,7 @@ function DashboardLayoutContent({
             {renderMenuGroup(mainMenuItems)}
             {renderMenuGroup(reportMenuItems, "レポート")}
             {renderMenuGroup(systemMenuItems, "システム")}
+            {isAdmin && renderMenuGroup(adminMenuItems, "管理者")}
           </SidebarContent>
 
           <SidebarFooter className="p-3 border-t border-sidebar-border/50">
@@ -256,9 +241,16 @@ function DashboardLayoutContent({
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
-                    <p className="text-sm font-medium truncate leading-none text-sidebar-foreground">
-                      {user?.name || "-"}
-                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-sm font-medium truncate leading-none text-sidebar-foreground">
+                        {user?.name || "-"}
+                      </p>
+                      {isAdmin && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-primary/10 text-primary uppercase tracking-wide">
+                          Admin
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[11px] text-sidebar-foreground/50 truncate mt-1">
                       {user?.email || "-"}
                     </p>
@@ -270,6 +262,12 @@ function DashboardLayoutContent({
                   <Settings className="mr-2 h-4 w-4" />
                   <span>設定</span>
                 </DropdownMenuItem>
+                {isAdmin && (
+                  <DropdownMenuItem onClick={() => setLocation("/admin")} className="cursor-pointer">
+                    <Shield className="mr-2 h-4 w-4" />
+                    <span>管理者画面</span>
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={logout} className="cursor-pointer text-destructive focus:text-destructive">
                   <LogOut className="mr-2 h-4 w-4" />

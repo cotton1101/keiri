@@ -7,7 +7,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Plus, Pencil, Trash2, ArrowUpRight, ArrowDownRight, Filter, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, ArrowUpRight, ArrowDownRight, Filter, Search, AlertTriangle } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { useLocation } from "wouter";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
 
@@ -32,7 +34,14 @@ export default function Transactions() {
     limit, offset: page * limit,
   });
 
-  const createMut = trpc.transactions.create.useMutation({ onSuccess: () => { utils.transactions.invalidate(); utils.dashboard.invalidate(); toast.success("取引を登録しました"); setDialogOpen(false); } });
+  const { data: limitInfo } = trpc.subscription.limitInfo.useQuery();
+  const [, navigate] = useLocation();
+  const isAtLimit = limitInfo?.plan === "free" && limitInfo.transactionRemaining !== null && limitInfo.transactionRemaining <= 0;
+
+  const createMut = trpc.transactions.create.useMutation({
+    onSuccess: () => { utils.transactions.invalidate(); utils.dashboard.invalidate(); utils.subscription.limitInfo.invalidate(); toast.success("取引を登録しました"); setDialogOpen(false); },
+    onError: (err) => { if (err.message.includes("無料プラン")) { toast.error(err.message, { action: { label: "アップグレード", onClick: () => navigate("/plans") } }); } else { toast.error(err.message); } },
+  });
   const updateMut = trpc.transactions.update.useMutation({ onSuccess: () => { utils.transactions.invalidate(); utils.dashboard.invalidate(); toast.success("取引を更新しました"); setDialogOpen(false); } });
   const deleteMut = trpc.transactions.delete.useMutation({ onSuccess: () => { utils.transactions.invalidate(); utils.dashboard.invalidate(); toast.success("取引を削除しました"); } });
 
@@ -48,7 +57,10 @@ export default function Transactions() {
   const total = txData?.total ?? 0;
   const totalPages = Math.ceil(total / limit);
 
-  function openCreate() { setEditingId(null); setForm({ ...emptyForm, accountId: accountsList?.[0]?.id ?? 0 }); setDialogOpen(true); }
+  function openCreate() {
+    if (isAtLimit) { toast.error("無料プランの取引上限（15件）に達しています", { action: { label: "アップグレード", onClick: () => navigate("/plans") } }); return; }
+    setEditingId(null); setForm({ ...emptyForm, accountId: accountsList?.[0]?.id ?? 0 }); setDialogOpen(true);
+  }
   function openEdit(tx: any) { setEditingId(tx.id); setForm({ type: tx.type, accountId: tx.accountId, amount: String(tx.amount), date: fromTimestamp(tx.date), description: tx.description, memo: tx.memo || "" }); setDialogOpen(true); }
   function handleSubmit() {
     if (!form.amount || Number(form.amount) <= 0) { toast.error("金額を入力してください"); return; }
@@ -69,6 +81,28 @@ export default function Transactions() {
         <Button onClick={openCreate} className="glow-primary gap-1.5" size="sm"><Plus className="h-4 w-4" />新規取引</Button>
       </div>
       <div className="page-header-line" />
+
+      {/* 無料プラン制限バナー */}
+      {limitInfo?.plan === "free" && (
+        <Card className={`shadow-sm ${isAtLimit ? "border-destructive bg-destructive/5" : "border-amber-200 bg-amber-50/50"}`}>
+          <CardContent className="p-4 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className={`h-5 w-5 shrink-0 ${isAtLimit ? "text-destructive" : "text-amber-600"}`} />
+              <div>
+                <p className="text-sm font-medium">
+                  {isAtLimit ? "取引上限に達しました" : `取引残り ${limitInfo.transactionRemaining} 件`}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  無料プラン: {limitInfo.transactionCount}/15件 使用済み
+                </p>
+              </div>
+            </div>
+            <Button size="sm" variant={isAtLimit ? "default" : "outline"} onClick={() => navigate("/plans")} className={isAtLimit ? "glow-primary" : ""}>
+              アップグレード
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="shadow-sm">
         <CardContent className="p-4">

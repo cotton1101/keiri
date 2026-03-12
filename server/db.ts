@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, sql, gte, lte } from "drizzle-orm";
+import { eq, and, desc, asc, sql, gte, lte, count, ne } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users,
@@ -12,6 +12,7 @@ import {
   subscriptions,
   recurringTransactions, InsertRecurringTransaction,
   taxFilings, InsertTaxFiling,
+  emailLogs, InsertEmailLog,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -169,6 +170,14 @@ export async function deleteTransaction(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   await db.delete(transactions).where(and(eq(transactions.id, id), eq(transactions.userId, userId)));
+}
+
+// ─── Transaction Count (for plan limits) ───
+export async function getTransactionCount(userId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db.select({ count: sql<number>`count(*)` }).from(transactions).where(eq(transactions.userId, userId));
+  return result[0]?.count ?? 0;
 }
 
 // ─── Dashboard Aggregations ───
@@ -395,11 +404,51 @@ export async function getTaxFilingById(id: number, userId: number) {
   return result.length > 0 ? result[0] : null;
 }
 
+/** 所得税の計算ロジック（2024年以降の税率表に基づく） */
+export function calculateIncomeTax(taxableIncome: number): { incomeTax: number; taxRate: number; deduction: number } {
+  if (taxableIncome <= 0) return { incomeTax: 0, taxRate: 0, deduction: 0 };
+  // 所得税速算表
+  const brackets = [
+    { limit: 1950000, rate: 0.05, deduction: 0 },
+    { limit: 3300000, rate: 0.10, deduction: 97500 },
+    { limit: 6950000, rate: 0.20, deduction: 427500 },
+    { limit: 9000000, rate: 0.23, deduction: 636000 },
+    { limit: 18000000, rate: 0.33, deduction: 1536000 },
+    { limit: 40000000, rate: 0.40, deduction: 2796000 },
+    { limit: Infinity, rate: 0.45, deduction: 4796000 },
+  ];
+  for (const b of brackets) {
+    if (taxableIncome <= b.limit) {
+      const incomeTax = Math.floor(taxableIncome * b.rate - b.deduction);
+      return { incomeTax, taxRate: b.rate * 100, deduction: b.deduction };
+    }
+  }
+  return { incomeTax: 0, taxRate: 0, deduction: 0 };
+}
+
+/** 住民税の概算（一律10%） */
+export function calculateResidentTax(taxableIncome: number): number {
+  if (taxableIncome <= 0) return 0;
+  return Math.floor(taxableIncome * 0.10);
+}
+
+/** 個人事業税の概算（事業所得290万超の部分に5%） */
+export function calculateBusinessTax(netIncome: number): number {
+  const threshold = 2900000;
+  if (netIncome <= threshold) return 0;
+  return Math.floor((netIncome - threshold) * 0.05);
+}
+
+/** 国民健康保険料の概算（所得割率 約11%、均等割 約5万円） */
+export function calculateHealthInsurance(taxableIncome: number): number {
+  if (taxableIncome <= 0) return 50000;
+  return Math.min(Math.floor(taxableIncome * 0.11 + 50000), 1060000); // 上限106万
+}
+
 export async function generateTaxFiling(userId: number, fiscalYear: number, filingType: "blue" | "white") {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  // Calculate totals from transactions for the fiscal year
   const startDate = new Date(fiscalYear, 0, 1).getTime();
   const endDate = new Date(fiscalYear, 11, 31, 23, 59, 59, 999).getTime();
 
@@ -415,10 +464,10 @@ export async function generateTaxFiling(userId: number, fiscalYear: number, fili
   }
 
   const netIncome = totalIncome - totalExpense;
-  const specialDeduction = filingType === "blue" ? Math.min(650000, netIncome) : 0;
-  const taxableIncome = Math.max(0, netIncome - specialDeduction);
+  const specialDeduction = filingType === "blue" ? Math.min(650000, Math.max(0, netIncome)) : 0;
+  const taxableIncome = Math.max(0, netIncome - specialDeduction - 480000); // 基礎控除48万
+  const { incomeTax } = calculateIncomeTax(taxableIncome);
 
-  // Get account-level breakdown
   const breakdown = await db.select({
     accountId: transactions.accountId,
     accountName: accounts.name,
@@ -431,28 +480,23 @@ export async function generateTaxFiling(userId: number, fiscalYear: number, fili
 
   const breakdownData = breakdown.map(b => ({ accountId: b.accountId, accountName: b.accountName, type: b.type, total: Number(b.total) }));
 
-  // Check if filing already exists for this year
   const existing = await db.select().from(taxFilings).where(and(eq(taxFilings.userId, userId), eq(taxFilings.fiscalYear, fiscalYear))).limit(1);
 
   const filingData = {
-    userId,
-    fiscalYear,
-    filingType,
-    totalIncome: String(totalIncome),
-    totalExpense: String(totalExpense),
-    netIncome: String(netIncome),
-    specialDeduction: String(specialDeduction),
-    taxableIncome: String(taxableIncome),
+    userId, fiscalYear, filingType,
+    totalIncome: String(totalIncome), totalExpense: String(totalExpense),
+    netIncome: String(netIncome), specialDeduction: String(specialDeduction),
+    taxableIncome: String(taxableIncome), incomeTax: String(incomeTax),
     breakdownData: JSON.stringify(breakdownData),
     status: "draft" as const,
   };
 
   if (existing.length > 0) {
     await db.update(taxFilings).set(filingData).where(eq(taxFilings.id, existing[0].id));
-    return { id: existing[0].id };
+    return { id: existing[0].id, ...filingData };
   } else {
     const insertResult = await db.insert(taxFilings).values(filingData);
-    return { id: insertResult[0].insertId };
+    return { id: insertResult[0].insertId, ...filingData };
   }
 }
 
@@ -466,4 +510,95 @@ export async function deleteTaxFiling(id: number, userId: number) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   await db.delete(taxFilings).where(and(eq(taxFilings.id, id), eq(taxFilings.userId, userId)));
+}
+
+// ─── Email Logs (メール送信履歴) ───
+export async function getEmailLogsByUser(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(emailLogs).where(eq(emailLogs.userId, userId)).orderBy(desc(emailLogs.createdAt));
+}
+
+export async function createEmailLog(data: InsertEmailLog) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const result = await db.insert(emailLogs).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateEmailLogStatus(id: number, status: "sent" | "failed") {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.update(emailLogs).set({ status, sentAt: status === "sent" ? new Date() : undefined }).where(eq(emailLogs.id, id));
+}
+
+// ─── Admin: User Management ───
+export async function getAllUsers(opts?: { limit?: number; offset?: number; search?: string }) {
+  const db = await getDb();
+  if (!db) return { items: [], total: 0 };
+  const conditions: any[] = [];
+  if (opts?.search) {
+    conditions.push(sql`(${users.name} LIKE ${`%${opts.search}%`} OR ${users.email} LIKE ${`%${opts.search}%`})`);
+  }
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+  const [items, countResult] = await Promise.all([
+    db.select().from(users).where(where).orderBy(desc(users.createdAt)).limit(opts?.limit ?? 50).offset(opts?.offset ?? 0),
+    db.select({ count: sql<number>`count(*)` }).from(users).where(where),
+  ]);
+  return { items, total: countResult[0]?.count ?? 0 };
+}
+
+export async function updateUserRole(userId: number, role: "user" | "admin") {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.update(users).set({ role }).where(eq(users.id, userId));
+}
+
+// ─── Admin: Stats ───
+export async function getAdminStats() {
+  const db = await getDb();
+  if (!db) return { totalUsers: 0, premiumUsers: 0, freeUsers: 0, totalTransactions: 0, totalInvoices: 0 };
+
+  const [userCount, subCounts, txnCount, invCount] = await Promise.all([
+    db.select({ count: sql<number>`count(*)` }).from(users),
+    db.select({ plan: subscriptions.plan, count: sql<number>`count(*)` }).from(subscriptions).groupBy(subscriptions.plan),
+    db.select({ count: sql<number>`count(*)` }).from(transactions),
+    db.select({ count: sql<number>`count(*)` }).from(invoices),
+  ]);
+
+  let premiumUsers = 0, freeUsers = 0;
+  for (const s of subCounts) {
+    if (s.plan === "premium") premiumUsers = s.count;
+    if (s.plan === "free") freeUsers = s.count;
+  }
+
+  return {
+    totalUsers: userCount[0]?.count ?? 0,
+    premiumUsers,
+    freeUsers,
+    totalTransactions: txnCount[0]?.count ?? 0,
+    totalInvoices: invCount[0]?.count ?? 0,
+  };
+}
+
+export async function getAdminSubscriptions(opts?: { limit?: number; offset?: number }) {
+  const db = await getDb();
+  if (!db) return { items: [], total: 0 };
+  const [items, countResult] = await Promise.all([
+    db.select({
+      id: subscriptions.id,
+      userId: subscriptions.userId,
+      plan: subscriptions.plan,
+      startDate: subscriptions.startDate,
+      endDate: subscriptions.endDate,
+      userName: users.name,
+      userEmail: users.email,
+    }).from(subscriptions)
+      .leftJoin(users, eq(subscriptions.userId, users.id))
+      .orderBy(desc(subscriptions.createdAt))
+      .limit(opts?.limit ?? 50)
+      .offset(opts?.offset ?? 0),
+    db.select({ count: sql<number>`count(*)` }).from(subscriptions),
+  ]);
+  return { items, total: countResult[0]?.count ?? 0 };
 }

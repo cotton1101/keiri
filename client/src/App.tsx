@@ -7,6 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import DashboardLayout from "./components/DashboardLayout";
 import { lazy, Suspense } from "react";
 
+const Landing = lazy(() => import("./pages/Landing"));
 const Home = lazy(() => import("./pages/Home"));
 const Transactions = lazy(() => import("./pages/Transactions"));
 const Accounts = lazy(() => import("./pages/Accounts"));
@@ -16,8 +17,12 @@ const InvoiceDetail = lazy(() => import("./pages/InvoiceDetail"));
 const Plans = lazy(() => import("./pages/Plans"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
 const TaxFiling = lazy(() => import("./pages/TaxFiling"));
+const TaxSimulator = lazy(() => import("./pages/TaxSimulator"));
 const ImportData = lazy(() => import("./pages/ImportData"));
 const Recurring = lazy(() => import("./pages/Recurring"));
+const AdminDashboard = lazy(() => import("./pages/admin/AdminDashboard"));
+const AdminUsers = lazy(() => import("./pages/admin/AdminUsers"));
+const AdminSubscriptions = lazy(() => import("./pages/admin/AdminSubscriptions"));
 
 function PageLoader() {
   return (
@@ -30,27 +35,44 @@ function PageLoader() {
   );
 }
 
-function Router() {
+function AppRoutes() {
   return (
     <DashboardLayout>
       <Suspense fallback={<PageLoader />}>
         <Switch>
-          <Route path="/" component={Home} />
+          <Route path="/dashboard" component={Home} />
           <Route path="/transactions" component={Transactions} />
           <Route path="/recurring" component={Recurring} />
           <Route path="/accounts" component={Accounts} />
           <Route path="/reports" component={Reports} />
           <Route path="/tax-filing" component={TaxFiling} />
+          <Route path="/tax-simulator" component={TaxSimulator} />
           <Route path="/invoices" component={Invoices} />
           <Route path="/invoices/:id" component={InvoiceDetail} />
           <Route path="/import" component={ImportData} />
           <Route path="/plans" component={Plans} />
           <Route path="/settings" component={SettingsPage} />
+          <Route path="/admin" component={AdminDashboard} />
+          <Route path="/admin/users" component={AdminUsers} />
+          <Route path="/admin/subscriptions" component={AdminSubscriptions} />
           <Route path="/404" component={NotFound} />
           <Route component={NotFound} />
         </Switch>
       </Suspense>
     </DashboardLayout>
+  );
+}
+
+function Router() {
+  return (
+    <Suspense fallback={<PageLoader />}>
+      <Switch>
+        <Route path="/" component={Landing} />
+        <Route>
+          <AppRoutes />
+        </Route>
+      </Switch>
+    </Suspense>
   );
 }
 

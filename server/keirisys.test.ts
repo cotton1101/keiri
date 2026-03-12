@@ -2,6 +2,11 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
+// Mock notification module
+vi.mock("./_core/notification", () => ({
+  notifyOwner: vi.fn(async () => true),
+}));
+
 // Mock the db module
 vi.mock("./db", () => {
   let mockAccounts: any[] = [];
@@ -12,6 +17,7 @@ vi.mock("./db", () => {
   let mockSubscription: any = null;
   let mockRecurring: any[] = [];
   let mockTaxFilings: any[] = [];
+  let mockEmailLogs: any[] = [];
   let idCounter = 1;
 
   return {
@@ -42,6 +48,9 @@ vi.mock("./db", () => {
       let items = mockTransactions.filter(t => t.userId === userId);
       if (opts?.type) items = items.filter(t => t.type === opts.type);
       return { items: items.slice(opts?.offset ?? 0, (opts?.offset ?? 0) + (opts?.limit ?? 50)), total: items.length };
+    }),
+    getTransactionCount: vi.fn(async (userId: number) => {
+      return mockTransactions.filter(t => t.userId === userId).length;
     }),
     createTransaction: vi.fn(async (data: any) => {
       const id = idCounter++;
@@ -149,6 +158,52 @@ vi.mock("./db", () => {
     deleteTaxFiling: vi.fn(async (id: number, userId: number) => {
       mockTaxFilings = mockTaxFilings.filter(t => !(t.id === id && t.userId === userId));
     }),
+    // Email
+    getEmailLogsByUser: vi.fn(async () => mockEmailLogs),
+    createEmailLog: vi.fn(async (data: any) => {
+      const id = idCounter++;
+      const log = { id, ...data, sentAt: new Date() };
+      mockEmailLogs.push(log);
+      return log;
+    }),
+    updateEmailLogStatus: vi.fn(async (id: number, status: string) => {
+      const idx = mockEmailLogs.findIndex(l => l.id === id);
+      if (idx >= 0) mockEmailLogs[idx].status = status;
+    }),
+    // Admin
+    getAdminStats: vi.fn(async () => ({
+      totalUsers: 42, premiumUsers: 12, totalTransactions: 1500,
+      totalInvoices: 200, monthlyRevenue: 23760,
+    })),
+    getAllUsers: vi.fn(async (opts?: any) => ({
+      items: [
+        { id: 1, name: "Test User", email: "test@example.com", role: "admin", createdAt: new Date(), lastSignedIn: new Date() },
+        { id: 2, name: "User Two", email: "user2@example.com", role: "user", createdAt: new Date(), lastSignedIn: new Date() },
+      ],
+      total: 2,
+    })),
+    updateUserRole: vi.fn(async () => {}),
+    getAdminSubscriptions: vi.fn(async (opts?: any) => ({
+      items: [
+        { id: 1, userId: 1, plan: "premium", startDate: Date.now(), endDate: null, userName: "Test User", userEmail: "test@example.com" },
+        { id: 2, userId: 2, plan: "free", startDate: Date.now(), endDate: null, userName: "User Two", userEmail: "user2@example.com" },
+      ],
+      total: 2,
+    })),
+    // Tax calculation helpers
+    calculateIncomeTax: vi.fn((taxableIncome: number) => {
+      if (taxableIncome <= 1950000) return { incomeTax: Math.floor(taxableIncome * 0.05), taxRate: 5, deduction: 0 };
+      if (taxableIncome <= 3300000) return { incomeTax: Math.floor(taxableIncome * 0.1 - 97500), taxRate: 10, deduction: 97500 };
+      return { incomeTax: Math.floor(taxableIncome * 0.2 - 427500), taxRate: 20, deduction: 427500 };
+    }),
+    calculateResidentTax: vi.fn((taxableIncome: number) => Math.floor(taxableIncome * 0.1)),
+    calculateBusinessTax: vi.fn((netIncome: number) => {
+      if (netIncome <= 2900000) return 0;
+      return Math.floor((netIncome - 2900000) * 0.05);
+    }),
+    calculateHealthInsurance: vi.fn((taxableIncome: number) => {
+      return Math.min(Math.floor(taxableIncome * 0.11 + 50000), 1060000);
+    }),
     // Required exports
     upsertUser: vi.fn(),
     getUserByOpenId: vi.fn(),
@@ -162,6 +217,18 @@ function createAuthContext(): TrpcContext {
   const user: AuthenticatedUser = {
     id: 1, openId: "test-user-001", email: "test@example.com", name: "Test User",
     loginMethod: "manus", role: "user", createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date(),
+  };
+  return {
+    user,
+    req: { protocol: "https", headers: {} } as TrpcContext["req"],
+    res: { clearCookie: vi.fn() } as unknown as TrpcContext["res"],
+  };
+}
+
+function createAdminContext(): TrpcContext {
+  const user: AuthenticatedUser = {
+    id: 1, openId: "admin-user-001", email: "admin@example.com", name: "Admin User",
+    loginMethod: "manus", role: "admin", createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date(),
   };
   return {
     user,
@@ -402,6 +469,17 @@ describe("Subscription (サブスクリプション)", () => {
     const result = await caller.subscription.update({ plan: "premium" });
     expect(result).toEqual({ success: true });
   });
+
+  it("returns plan limit info with transaction count", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.subscription.limitInfo();
+    expect(result).toHaveProperty("plan");
+    expect(result).toHaveProperty("transactionLimit");
+    expect(result).toHaveProperty("transactionCount");
+    expect(result).toHaveProperty("transactionRemaining");
+    expect(typeof result.transactionCount).toBe("number");
+  });
 });
 
 describe("Recurring (固定費・定期取引)", () => {
@@ -479,7 +557,6 @@ describe("Tax Filing (確定申告)", () => {
   it("gets a tax filing by id", async () => {
     const ctx = createAuthContext();
     const caller = appRouter.createCaller(ctx);
-    // Generate first to ensure one exists
     const generated = await caller.taxFiling.generate({ fiscalYear: 2024, filingType: "blue" });
     const result = await caller.taxFiling.get({ id: generated.id });
     expect(result).not.toBeNull();
@@ -498,5 +575,118 @@ describe("Tax Filing (確定申告)", () => {
     const caller = appRouter.createCaller(ctx);
     const result = await caller.taxFiling.delete({ id: 1 });
     expect(result).toEqual({ success: true });
+  });
+
+  it("simulates tax calculation for blue filing", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.taxFiling.simulate({ year: 2026, filingType: "blue" });
+    expect(result).toHaveProperty("totalIncome");
+    expect(result).toHaveProperty("totalExpense");
+    expect(result).toHaveProperty("netIncome");
+    expect(result).toHaveProperty("incomeTax");
+    expect(result).toHaveProperty("residentTax");
+    expect(result).toHaveProperty("businessTax");
+    expect(result).toHaveProperty("healthInsurance");
+    expect(result).toHaveProperty("totalTax");
+    expect(result).toHaveProperty("effectiveRate");
+    expect(result).toHaveProperty("specialDeduction");
+    expect(typeof result.totalTax).toBe("number");
+    expect(typeof result.effectiveRate).toBe("number");
+  });
+
+  it("simulates tax calculation for white filing (no blue deduction)", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.taxFiling.simulate({ year: 2026, filingType: "white" });
+    expect(result.specialDeduction).toBe(0);
+  });
+});
+
+describe("Email (メール送信)", () => {
+  it("lists email logs", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.email.logs();
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  it("sends an invoice email", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.email.send({
+      invoiceId: 1,
+      toEmail: "client@example.com",
+      toName: "株式会社テスト",
+      subject: "【請求書】INV-0001",
+      body: "請求書をお送りします。",
+      documentType: "invoice",
+    });
+    expect(result).toHaveProperty("success", true);
+    expect(result).toHaveProperty("id");
+  });
+
+  it("sends an email without invoice link", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.email.send({
+      toEmail: "client@example.com",
+      subject: "見積書のご送付",
+      body: "見積書を添付いたします。",
+      documentType: "quote",
+    });
+    expect(result).toHaveProperty("success", true);
+  });
+});
+
+describe("Admin (管理者)", () => {
+  it("returns admin stats", async () => {
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.admin.stats();
+    expect(result).toHaveProperty("totalUsers");
+    expect(result).toHaveProperty("premiumUsers");
+    expect(result).toHaveProperty("totalTransactions");
+    expect(result).toHaveProperty("totalInvoices");
+    expect(result).toHaveProperty("monthlyRevenue");
+    expect(typeof result.totalUsers).toBe("number");
+  });
+
+  it("lists all users", async () => {
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.admin.users.list({});
+    expect(result).toHaveProperty("items");
+    expect(result).toHaveProperty("total");
+    expect(Array.isArray(result.items)).toBe(true);
+    expect(result.items.length).toBeGreaterThan(0);
+  });
+
+  it("updates user role", async () => {
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.admin.users.updateRole({ userId: 2, role: "admin" });
+    expect(result).toEqual({ success: true });
+  });
+
+  it("lists subscriptions", async () => {
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.admin.subscriptions.list({});
+    expect(result).toHaveProperty("items");
+    expect(result).toHaveProperty("total");
+    expect(Array.isArray(result.items)).toBe(true);
+  });
+
+  it("rejects non-admin access to admin stats", async () => {
+    const ctx = createAuthContext(); // regular user
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.admin.stats()).rejects.toThrow();
+  });
+
+  it("rejects non-admin access to user list", async () => {
+    const ctx = createAuthContext(); // regular user
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.admin.users.list({})).rejects.toThrow();
   });
 });

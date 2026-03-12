@@ -1,0 +1,9 @@
+v3 UI Status:
+- Dashboard: Working, shows monthly summary cards (income/expense/profit), monthly chart, recent transactions
+- Sidebar: Dark theme with all navigation items including admin section
+- Navigation items: ダッシュボード, 取引管理, 固定費・定期, 勘定科目, レポート, 確定申告, 税金シミュレーション, 請求書, インポート, プラン, 設定, 管理者ダッシュボード, ユーザー管理
+- User info shown at bottom of sidebar
+- TypeScript: 0 errors
+- Server: Running
+- Landing page: Created at / route
+- Need to verify: LP at root, admin pages, email sending UI

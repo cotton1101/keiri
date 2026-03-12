@@ -16,11 +16,12 @@ export default function Plans() {
       id: "free" as const, name: "フリー", price: "0", period: "永久無料",
       desc: "まずは無料で始めたい方に", icon: Sparkles, color: "emerald",
       features: [
-        { text: "月間50件までの取引登録", included: true },
+        { text: "取引登録 15件まで", included: true },
         { text: "基本的な勘定科目管理", included: true },
         { text: "月次収支レポート", included: true },
         { text: "ダッシュボード閲覧", included: true },
         { text: "請求書作成（月5件まで）", included: true },
+        { text: "税金シミュレーション", included: false },
         { text: "年次レポート・損益計算書", included: false },
         { text: "確定申告書類作成", included: false },
         { text: "データインポート", included: false },
@@ -28,7 +29,7 @@ export default function Plans() {
       ],
     },
     {
-      id: "premium" as const, name: "プレミアム", price: "980", period: "/月（税込）",
+      id: "premium" as const, name: "プレミアム", price: "1,980", period: "/月（税込）",
       desc: "本格的な経理管理を求める方に", icon: Zap, color: "violet",
       features: [
         { text: "取引登録 無制限", included: true },
@@ -50,7 +51,7 @@ export default function Plans() {
       <div className="text-center max-w-xl mx-auto">
         <Badge variant="outline" className="mb-4 text-xs px-3 py-1">シンプルな料金体系</Badge>
         <h1 className="text-3xl font-bold tracking-tight">あなたに合ったプランを</h1>
-        <p className="text-muted-foreground mt-2">業界最安値クラスの月額980円で、確定申告まで完結。</p>
+        <p className="text-muted-foreground mt-2">業界最安クラスの月額1,980円で、確定申告まで完結。</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
@@ -122,7 +123,7 @@ export default function Plans() {
               </tr></thead>
               <tbody>
                 {[
-                  ["取引登録", "月50件", "無制限"], ["勘定科目管理", "基本", "カスタム対応"],
+                  ["取引登録", "15件", "無制限"], ["勘定科目管理", "基本", "カスタム対応"],
                   ["ダッシュボード", "check", "check"], ["月次レポート", "check", "check"],
                   ["年次レポート", "x", "check"], ["損益計算書", "x", "check"],
                   ["確定申告（青色・白色）", "x", "check"], ["請求書作成", "月5件", "無制限"],

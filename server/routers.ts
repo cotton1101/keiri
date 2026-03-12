@@ -2,8 +2,16 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "./db";
+import { notifyOwner } from "./_core/notification";
+
+// Admin-only procedure
+const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
+  if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN", message: "管理者権限が必要です" });
+  return next({ ctx });
+});
 
 export const appRouter = router({
   system: systemRouter,
@@ -70,6 +78,14 @@ export const appRouter = router({
       description: z.string().optional(),
       memo: z.string().optional(),
     })).mutation(async ({ ctx, input }) => {
+      // 無料プラン15件制限チェック
+      const sub = await db.getSubscription(ctx.user.id);
+      if (!sub || sub.plan !== "premium") {
+        const count = await db.getTransactionCount(ctx.user.id);
+        if (count >= 15) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "無料プランでは取引は15件までです。プレミアムプランにアップグレードすると無制限にご利用いただけます。" });
+        }
+      }
       return db.createTransaction({ ...input, userId: ctx.user.id, description: input.description ?? "", memo: input.memo ?? null });
     }),
     update: protectedProcedure.input(z.object({
@@ -102,48 +118,47 @@ export const appRouter = router({
     })).mutation(async ({ ctx, input }) => {
       const userAccounts = await db.getAccountsByUser(ctx.user.id);
       const accountMap = new Map(userAccounts.map(a => [a.name, a.id]));
-      const txns = input.data.map(d => {
+      let txns = input.data.map(d => {
         let accountId = accountMap.get(d.accountName);
         if (!accountId) {
           const fallback = userAccounts.find(a => a.type === d.type);
           accountId = fallback?.id ?? userAccounts[0]?.id ?? 0;
         }
         return {
-          userId: ctx.user.id,
-          type: d.type,
-          accountId,
-          amount: d.amount,
-          date: d.date,
-          description: d.description ?? "",
-          memo: d.memo ?? null,
+          userId: ctx.user.id, type: d.type, accountId, amount: d.amount,
+          date: d.date, description: d.description ?? "", memo: d.memo ?? null,
           importSource: input.source,
         };
       });
+      // 無料プラン制限チェック（インポート時）
+      const sub = await db.getSubscription(ctx.user.id);
+      if (!sub || sub.plan !== "premium") {
+        const currentCount = await db.getTransactionCount(ctx.user.id);
+        const remaining = Math.max(0, 15 - currentCount);
+        if (remaining === 0) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "無料プランでは取引は15件までです。プレミアムプランにアップグレードしてください。" });
+        }
+        if (txns.length > remaining) {
+          txns = txns.slice(0, remaining);
+        }
+      }
       return db.createTransactionsBulk(txns);
     }),
   }),
 
   // ─── Dashboard ───
   dashboard: router({
-    summary: protectedProcedure.input(z.object({
-      year: z.number(),
-      month: z.number(),
-    })).query(async ({ ctx, input }) => {
+    summary: protectedProcedure.input(z.object({ year: z.number(), month: z.number() })).query(async ({ ctx, input }) => {
       return db.getMonthlySummary(ctx.user.id, input.year, input.month);
     }),
-    trend: protectedProcedure.input(z.object({
-      year: z.number(),
-    })).query(async ({ ctx, input }) => {
+    trend: protectedProcedure.input(z.object({ year: z.number() })).query(async ({ ctx, input }) => {
       return db.getYearlyMonthlyTrend(ctx.user.id, input.year);
     }),
     recentTransactions: protectedProcedure.query(async ({ ctx }) => {
       const result = await db.getTransactionsByUser(ctx.user.id, { limit: 10 });
       return result.items;
     }),
-    accountBreakdown: protectedProcedure.input(z.object({
-      year: z.number(),
-      month: z.number().optional(),
-    })).query(async ({ ctx, input }) => {
+    accountBreakdown: protectedProcedure.input(z.object({ year: z.number(), month: z.number().optional() })).query(async ({ ctx, input }) => {
       return db.getAccountBreakdown(ctx.user.id, input.year, input.month);
     }),
   }),
@@ -164,12 +179,9 @@ export const appRouter = router({
     })).mutation(async ({ ctx, input }) => {
       return db.createClient({
         ...input, userId: ctx.user.id,
-        contactPerson: input.contactPerson ?? "",
-        email: input.email ?? "",
-        phone: input.phone ?? "",
-        postalCode: input.postalCode ?? "",
-        address: input.address ?? null,
-        memo: input.memo ?? null,
+        contactPerson: input.contactPerson ?? "", email: input.email ?? "",
+        phone: input.phone ?? "", postalCode: input.postalCode ?? "",
+        address: input.address ?? null, memo: input.memo ?? null,
       });
     }),
     update: protectedProcedure.input(z.object({
@@ -287,6 +299,17 @@ export const appRouter = router({
     get: protectedProcedure.query(async ({ ctx }) => {
       return db.getSubscription(ctx.user.id);
     }),
+    limitInfo: protectedProcedure.query(async ({ ctx }) => {
+      const sub = await db.getSubscription(ctx.user.id);
+      const isPremium = sub?.plan === "premium";
+      const txnCount = await db.getTransactionCount(ctx.user.id);
+      return {
+        plan: isPremium ? "premium" as const : "free" as const,
+        transactionLimit: isPremium ? null : 15,
+        transactionCount: txnCount,
+        transactionRemaining: isPremium ? null : Math.max(0, 15 - txnCount),
+      };
+    }),
     update: protectedProcedure.input(z.object({
       plan: z.enum(["free", "premium"]),
     })).mutation(async ({ ctx, input }) => {
@@ -355,6 +378,111 @@ export const appRouter = router({
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
       await db.deleteTaxFiling(input.id, ctx.user.id);
       return { success: true };
+    }),
+    // 税金シミュレーション（リアルタイム概算）
+    simulate: protectedProcedure.input(z.object({
+      year: z.number(),
+      filingType: z.enum(["blue", "white"]),
+    })).query(async ({ ctx, input }) => {
+      const summary = await db.getYearlyMonthlyTrend(ctx.user.id, input.year);
+      let totalIncome = 0, totalExpense = 0;
+      for (const s of summary) {
+        if (s.type === "income") totalIncome += s.total;
+        if (s.type === "expense") totalExpense += s.total;
+      }
+      const netIncome = totalIncome - totalExpense;
+      const specialDeduction = input.filingType === "blue" ? Math.min(650000, Math.max(0, netIncome)) : 0;
+      const basicDeduction = 480000;
+      const taxableIncome = Math.max(0, netIncome - specialDeduction - basicDeduction);
+      const { incomeTax, taxRate, deduction } = db.calculateIncomeTax(taxableIncome);
+      const residentTax = db.calculateResidentTax(taxableIncome);
+      const businessTax = db.calculateBusinessTax(netIncome);
+      const healthInsurance = db.calculateHealthInsurance(taxableIncome);
+      const totalTax = incomeTax + residentTax + businessTax;
+      return {
+        totalIncome, totalExpense, netIncome, specialDeduction, basicDeduction,
+        taxableIncome, incomeTax, taxRate, deduction, residentTax, businessTax,
+        healthInsurance, totalTax,
+        effectiveRate: netIncome > 0 ? Math.round(totalTax / netIncome * 1000) / 10 : 0,
+      };
+    }),
+  }),
+
+  // ─── Email (メール送信) ───
+  email: router({
+    logs: protectedProcedure.query(async ({ ctx }) => {
+      return db.getEmailLogsByUser(ctx.user.id);
+    }),
+    send: protectedProcedure.input(z.object({
+      invoiceId: z.number().optional(),
+      toEmail: z.string().email(),
+      toName: z.string().optional(),
+      subject: z.string().min(1),
+      body: z.string().min(1),
+      documentType: z.enum(["invoice", "quote", "order"]),
+    })).mutation(async ({ ctx, input }) => {
+      // Create email log entry
+      const logEntry = await db.createEmailLog({
+        userId: ctx.user.id,
+        invoiceId: input.invoiceId ?? null,
+        toEmail: input.toEmail,
+        toName: input.toName ?? "",
+        subject: input.subject,
+        body: input.body,
+        documentType: input.documentType,
+        status: "pending",
+      });
+
+      try {
+        // Use notifyOwner as email sending mechanism (sends notification to owner)
+        // In production, this would integrate with an email service like SendGrid/SES
+        await notifyOwner({
+          title: `[${input.documentType === "invoice" ? "請求書" : input.documentType === "quote" ? "見積書" : "注文書"}] ${input.subject}`,
+          content: `宛先: ${input.toName} <${input.toEmail}>\n\n${input.body}`,
+        });
+        await db.updateEmailLogStatus(logEntry.id, "sent");
+
+        // Update invoice status to "sent" if linked
+        if (input.invoiceId) {
+          await db.updateInvoice(input.invoiceId, ctx.user.id, { status: "sent" });
+        }
+
+        return { success: true, id: logEntry.id };
+      } catch (error) {
+        await db.updateEmailLogStatus(logEntry.id, "failed");
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "メール送信に失敗しました" });
+      }
+    }),
+  }),
+
+  // ─── Admin (管理者) ───
+  admin: router({
+    stats: adminProcedure.query(async () => {
+      return db.getAdminStats();
+    }),
+    users: router({
+      list: adminProcedure.input(z.object({
+        limit: z.number().optional(),
+        offset: z.number().optional(),
+        search: z.string().optional(),
+      }).optional()).query(async ({ input }) => {
+        return db.getAllUsers(input);
+      }),
+      updateRole: adminProcedure.input(z.object({
+        userId: z.number(),
+        role: z.enum(["user", "admin"]),
+      })).mutation(async ({ input }) => {
+        await db.updateUserRole(input.userId, input.role);
+        return { success: true };
+      }),
+    }),
+    subscriptions: router({
+      list: adminProcedure.input(z.object({
+        limit: z.number().optional(),
+        offset: z.number().optional(),
+      }).optional()).query(async ({ input }) => {
+        return db.getAdminSubscriptions(input);
+      }),
     }),
   }),
 });
