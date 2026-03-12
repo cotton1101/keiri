@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, sql, between, gte, lte } from "drizzle-orm";
+import { eq, and, desc, asc, sql, gte, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users,
@@ -9,7 +9,9 @@ import {
   invoices, InsertInvoice,
   invoiceItems, InsertInvoiceItem,
   businessProfiles, InsertBusinessProfile,
-  subscriptions, InsertSubscription,
+  subscriptions,
+  recurringTransactions, InsertRecurringTransaction,
+  taxFilings, InsertTaxFiling,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -17,12 +19,7 @@ let _db: ReturnType<typeof drizzle> | null = null;
 
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
-    try {
-      _db = drizzle(process.env.DATABASE_URL);
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
-      _db = null;
-    }
+    try { _db = drizzle(process.env.DATABASE_URL); } catch (error) { console.warn("[Database] Failed to connect:", error); _db = null; }
   }
   return _db;
 }
@@ -37,13 +34,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     const updateSet: Record<string, unknown> = {};
     const textFields = ["name", "email", "loginMethod"] as const;
     type TextField = (typeof textFields)[number];
-    const assignNullable = (field: TextField) => {
-      const value = user[field];
-      if (value === undefined) return;
-      const normalized = value ?? null;
-      values[field] = normalized;
-      updateSet[field] = normalized;
-    };
+    const assignNullable = (field: TextField) => { const value = user[field]; if (value === undefined) return; const normalized = value ?? null; values[field] = normalized; updateSet[field] = normalized; };
     textFields.forEach(assignNullable);
     if (user.lastSignedIn !== undefined) { values.lastSignedIn = user.lastSignedIn; updateSet.lastSignedIn = user.lastSignedIn; }
     if (user.role !== undefined) { values.role = user.role; updateSet.role = user.role; } else if (user.openId === ENV.ownerOpenId) { values.role = 'admin'; updateSet.role = 'admin'; }
@@ -158,6 +149,14 @@ export async function createTransaction(data: InsertTransaction) {
   if (!db) throw new Error("DB not available");
   const result = await db.insert(transactions).values(data);
   return { id: result[0].insertId };
+}
+
+export async function createTransactionsBulk(dataList: InsertTransaction[]) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  if (dataList.length === 0) return { count: 0 };
+  await db.insert(transactions).values(dataList);
+  return { count: dataList.length };
 }
 
 export async function updateTransaction(id: number, userId: number, data: Partial<InsertTransaction>) {
@@ -354,4 +353,117 @@ export async function upsertSubscription(userId: number, plan: "free" | "premium
   } else {
     await db.insert(subscriptions).values({ userId, plan, startDate: now });
   }
+}
+
+// ─── Recurring Transactions (固定費・定期取引) ───
+export async function getRecurringByUser(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(recurringTransactions).where(eq(recurringTransactions.userId, userId)).orderBy(asc(recurringTransactions.description));
+}
+
+export async function createRecurring(data: InsertRecurringTransaction) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const result = await db.insert(recurringTransactions).values(data);
+  return { id: result[0].insertId };
+}
+
+export async function updateRecurring(id: number, userId: number, data: Partial<InsertRecurringTransaction>) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.update(recurringTransactions).set(data).where(and(eq(recurringTransactions.id, id), eq(recurringTransactions.userId, userId)));
+}
+
+export async function deleteRecurring(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.delete(recurringTransactions).where(and(eq(recurringTransactions.id, id), eq(recurringTransactions.userId, userId)));
+}
+
+// ─── Tax Filings (確定申告) ───
+export async function getTaxFilingsByUser(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(taxFilings).where(eq(taxFilings.userId, userId)).orderBy(desc(taxFilings.fiscalYear));
+}
+
+export async function getTaxFilingById(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(taxFilings).where(and(eq(taxFilings.id, id), eq(taxFilings.userId, userId))).limit(1);
+  return result.length > 0 ? result[0] : null;
+}
+
+export async function generateTaxFiling(userId: number, fiscalYear: number, filingType: "blue" | "white") {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+
+  // Calculate totals from transactions for the fiscal year
+  const startDate = new Date(fiscalYear, 0, 1).getTime();
+  const endDate = new Date(fiscalYear, 11, 31, 23, 59, 59, 999).getTime();
+
+  const result = await db.select({
+    type: transactions.type,
+    total: sql<string>`COALESCE(SUM(amount), 0)`,
+  }).from(transactions).where(and(eq(transactions.userId, userId), gte(transactions.date, startDate), lte(transactions.date, endDate))).groupBy(transactions.type);
+
+  let totalIncome = 0, totalExpense = 0;
+  for (const r of result) {
+    if (r.type === "income") totalIncome = Number(r.total);
+    if (r.type === "expense") totalExpense = Number(r.total);
+  }
+
+  const netIncome = totalIncome - totalExpense;
+  const specialDeduction = filingType === "blue" ? Math.min(650000, netIncome) : 0;
+  const taxableIncome = Math.max(0, netIncome - specialDeduction);
+
+  // Get account-level breakdown
+  const breakdown = await db.select({
+    accountId: transactions.accountId,
+    accountName: accounts.name,
+    type: transactions.type,
+    total: sql<string>`COALESCE(SUM(${transactions.amount}), 0)`,
+  }).from(transactions)
+    .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+    .where(and(eq(transactions.userId, userId), gte(transactions.date, startDate), lte(transactions.date, endDate)))
+    .groupBy(transactions.accountId, accounts.name, transactions.type);
+
+  const breakdownData = breakdown.map(b => ({ accountId: b.accountId, accountName: b.accountName, type: b.type, total: Number(b.total) }));
+
+  // Check if filing already exists for this year
+  const existing = await db.select().from(taxFilings).where(and(eq(taxFilings.userId, userId), eq(taxFilings.fiscalYear, fiscalYear))).limit(1);
+
+  const filingData = {
+    userId,
+    fiscalYear,
+    filingType,
+    totalIncome: String(totalIncome),
+    totalExpense: String(totalExpense),
+    netIncome: String(netIncome),
+    specialDeduction: String(specialDeduction),
+    taxableIncome: String(taxableIncome),
+    breakdownData: JSON.stringify(breakdownData),
+    status: "draft" as const,
+  };
+
+  if (existing.length > 0) {
+    await db.update(taxFilings).set(filingData).where(eq(taxFilings.id, existing[0].id));
+    return { id: existing[0].id };
+  } else {
+    const insertResult = await db.insert(taxFilings).values(filingData);
+    return { id: insertResult[0].insertId };
+  }
+}
+
+export async function updateTaxFiling(id: number, userId: number, data: Partial<InsertTaxFiling>) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.update(taxFilings).set(data).where(and(eq(taxFilings.id, id), eq(taxFilings.userId, userId)));
+}
+
+export async function deleteTaxFiling(id: number, userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.delete(taxFilings).where(and(eq(taxFilings.id, id), eq(taxFilings.userId, userId)));
 }

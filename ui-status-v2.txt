@@ -1,0 +1,15 @@
+UI Status v2 Check - 2026-03-12
+
+Dashboard page looks great:
+- Sidebar with all navigation items: ダッシュボード, 取引管理, 固定費・定期, 勘定科目, レポート, 確定申告, 請求書, インポート, プラン, 設定
+- Clean purple/indigo sidebar with proper sections
+- Summary cards with colored backgrounds (green for income, pink for expense, blue for profit)
+- Monthly chart area and recent transactions section
+- User profile at bottom of sidebar
+- "取引を追加" button in header
+- Page header line separator working
+- Overall design is clean and modern SaaS style
+
+TypeScript: 0 errors
+Server: running
+All pages exist and compile correctly

@@ -89,6 +89,38 @@ export const appRouter = router({
       await db.deleteTransaction(input.id, ctx.user.id);
       return { success: true };
     }),
+    import: protectedProcedure.input(z.object({
+      source: z.enum(["freee", "yayoi", "moneyforward", "csv"]),
+      data: z.array(z.object({
+        type: z.enum(["income", "expense"]),
+        accountName: z.string(),
+        amount: z.string(),
+        date: z.number(),
+        description: z.string().optional(),
+        memo: z.string().optional(),
+      })),
+    })).mutation(async ({ ctx, input }) => {
+      const userAccounts = await db.getAccountsByUser(ctx.user.id);
+      const accountMap = new Map(userAccounts.map(a => [a.name, a.id]));
+      const txns = input.data.map(d => {
+        let accountId = accountMap.get(d.accountName);
+        if (!accountId) {
+          const fallback = userAccounts.find(a => a.type === d.type);
+          accountId = fallback?.id ?? userAccounts[0]?.id ?? 0;
+        }
+        return {
+          userId: ctx.user.id,
+          type: d.type,
+          accountId,
+          amount: d.amount,
+          date: d.date,
+          description: d.description ?? "",
+          memo: d.memo ?? null,
+          importSource: input.source,
+        };
+      });
+      return db.createTransactionsBulk(txns);
+    }),
   }),
 
   // ─── Dashboard ───
@@ -243,6 +275,7 @@ export const appRouter = router({
       bankAccountNumber: z.string().optional(),
       bankAccountName: z.string().optional(),
       fiscalYearStart: z.number().optional(),
+      filingType: z.enum(["blue", "white"]).optional(),
     })).mutation(async ({ ctx, input }) => {
       const id = await db.upsertBusinessProfile(ctx.user.id, input);
       return { id };
@@ -258,6 +291,69 @@ export const appRouter = router({
       plan: z.enum(["free", "premium"]),
     })).mutation(async ({ ctx, input }) => {
       await db.upsertSubscription(ctx.user.id, input.plan);
+      return { success: true };
+    }),
+  }),
+
+  // ─── Recurring Transactions (固定費) ───
+  recurring: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      return db.getRecurringByUser(ctx.user.id);
+    }),
+    create: protectedProcedure.input(z.object({
+      type: z.enum(["income", "expense"]),
+      accountId: z.number(),
+      amount: z.string(),
+      description: z.string(),
+      frequency: z.enum(["monthly", "yearly"]),
+      dayOfMonth: z.number(),
+    })).mutation(async ({ ctx, input }) => {
+      return db.createRecurring({ ...input, userId: ctx.user.id });
+    }),
+    update: protectedProcedure.input(z.object({
+      id: z.number(),
+      type: z.enum(["income", "expense"]).optional(),
+      accountId: z.number().optional(),
+      amount: z.string().optional(),
+      description: z.string().optional(),
+      frequency: z.enum(["monthly", "yearly"]).optional(),
+      dayOfMonth: z.number().optional(),
+      isActive: z.number().optional(),
+    })).mutation(async ({ ctx, input }) => {
+      const { id, ...data } = input;
+      await db.updateRecurring(id, ctx.user.id, data);
+      return { success: true };
+    }),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+      await db.deleteRecurring(input.id, ctx.user.id);
+      return { success: true };
+    }),
+  }),
+
+  // ─── Tax Filings (確定申告) ───
+  taxFiling: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      return db.getTaxFilingsByUser(ctx.user.id);
+    }),
+    get: protectedProcedure.input(z.object({ id: z.number() })).query(async ({ ctx, input }) => {
+      return db.getTaxFilingById(input.id, ctx.user.id);
+    }),
+    generate: protectedProcedure.input(z.object({
+      fiscalYear: z.number(),
+      filingType: z.enum(["blue", "white"]),
+    })).mutation(async ({ ctx, input }) => {
+      return db.generateTaxFiling(ctx.user.id, input.fiscalYear, input.filingType);
+    }),
+    update: protectedProcedure.input(z.object({
+      id: z.number(),
+      status: z.enum(["draft", "completed"]).optional(),
+    })).mutation(async ({ ctx, input }) => {
+      const { id, ...data } = input;
+      await db.updateTaxFiling(id, ctx.user.id, data);
+      return { success: true };
+    }),
+    delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
+      await db.deleteTaxFiling(input.id, ctx.user.id);
       return { success: true };
     }),
   }),

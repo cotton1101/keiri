@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, date, bigint } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, bigint, json } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -37,6 +37,7 @@ export const businessProfiles = mysqlTable("business_profiles", {
   bankAccountNumber: varchar("bankAccountNumber", { length: 20 }).notNull().default(""),
   bankAccountName: varchar("bankAccountName", { length: 100 }).notNull().default(""),
   fiscalYearStart: int("fiscalYearStart").notNull().default(1),
+  filingType: mysqlEnum("filingType", ["blue", "white"]).notNull().default("white"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -92,12 +93,57 @@ export const transactions = mysqlTable("transactions", {
   date: bigint("date", { mode: "number" }).notNull(),
   description: varchar("description", { length: 500 }).notNull().default(""),
   memo: text("memo"),
+  receiptUrl: text("receiptUrl"),
+  importSource: varchar("importSource", { length: 50 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export type Transaction = typeof transactions.$inferSelect;
 export type InsertTransaction = typeof transactions.$inferInsert;
+
+/**
+ * Recurring transactions - 固定費・定期取引
+ */
+export const recurringTransactions = mysqlTable("recurring_transactions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  type: mysqlEnum("type", ["income", "expense"]).notNull(),
+  accountId: int("accountId").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 0 }).notNull(),
+  description: varchar("description", { length: 500 }).notNull().default(""),
+  frequency: mysqlEnum("frequency", ["monthly", "yearly"]).notNull().default("monthly"),
+  dayOfMonth: int("dayOfMonth").notNull().default(1),
+  isActive: int("isActive").notNull().default(1),
+  lastGeneratedDate: bigint("lastGeneratedDate", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type RecurringTransaction = typeof recurringTransactions.$inferSelect;
+export type InsertRecurringTransaction = typeof recurringTransactions.$inferInsert;
+
+/**
+ * Tax filings - 確定申告データ
+ */
+export const taxFilings = mysqlTable("tax_filings", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  fiscalYear: int("fiscalYear").notNull(),
+  filingType: mysqlEnum("filingType", ["blue", "white"]).notNull(),
+  status: mysqlEnum("status", ["draft", "completed"]).notNull().default("draft"),
+  totalIncome: decimal("totalIncome", { precision: 12, scale: 0 }).notNull().default("0"),
+  totalExpense: decimal("totalExpense", { precision: 12, scale: 0 }).notNull().default("0"),
+  netIncome: decimal("netIncome", { precision: 12, scale: 0 }).notNull().default("0"),
+  specialDeduction: decimal("specialDeduction", { precision: 12, scale: 0 }).notNull().default("0"),
+  taxableIncome: decimal("taxableIncome", { precision: 12, scale: 0 }).notNull().default("0"),
+  breakdownData: json("breakdownData"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TaxFiling = typeof taxFilings.$inferSelect;
+export type InsertTaxFiling = typeof taxFilings.$inferInsert;
 
 /**
  * Clients - 取引先

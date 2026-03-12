@@ -6,200 +6,147 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, BookOpen } from "lucide-react";
+import { Plus, Pencil, Trash2, BookOpen, Tag } from "lucide-react";
 import { useState, useMemo } from "react";
 
-type AccountForm = {
-  name: string;
-  type: "income" | "expense" | "asset" | "liability";
-  code: string;
-  description: string;
-};
-
+type AccountForm = { name: string; type: "income" | "expense" | "asset" | "liability"; code: string; description: string; };
 const emptyForm: AccountForm = { name: "", type: "expense", code: "", description: "" };
 
-const typeLabels: Record<string, string> = {
-  income: "収入",
-  expense: "経費",
-  asset: "資産",
-  liability: "負債",
-};
-
-const typeColors: Record<string, string> = {
-  income: "bg-emerald-500/10 text-emerald-700",
-  expense: "bg-red-500/10 text-red-600",
-  asset: "bg-blue-500/10 text-blue-700",
-  liability: "bg-amber-500/10 text-amber-700",
+const typeConfig: Record<string, { label: string; bg: string }> = {
+  income: { label: "収入", bg: "bg-emerald-500/10 text-emerald-700" },
+  expense: { label: "支出", bg: "bg-rose-500/10 text-rose-600" },
+  asset: { label: "資産", bg: "bg-blue-500/10 text-blue-700" },
+  liability: { label: "負債", bg: "bg-amber-500/10 text-amber-700" },
 };
 
 export default function Accounts() {
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState<AccountForm>(emptyForm);
-  const [activeTab, setActiveTab] = useState("expense");
+  const [filterType, setFilterType] = useState<string>("all");
 
   const utils = trpc.useUtils();
-  const { data: accountsList, isLoading } = trpc.accounts.list.useQuery();
+  const { data: accounts, isLoading } = trpc.accounts.list.useQuery();
+  const createMut = trpc.accounts.create.useMutation({ onSuccess: () => { utils.accounts.invalidate(); toast.success("科目を追加しました"); setDialogOpen(false); } });
+  const updateMut = trpc.accounts.update.useMutation({ onSuccess: () => { utils.accounts.invalidate(); toast.success("科目を更新しました"); setDialogOpen(false); } });
+  const deleteMut = trpc.accounts.delete.useMutation({ onSuccess: () => { utils.accounts.invalidate(); toast.success("科目を削除しました"); } });
 
-  const createMut = trpc.accounts.create.useMutation({
-    onSuccess: () => { utils.accounts.invalidate(); toast.success("勘定科目を追加しました"); setDialogOpen(false); },
-    onError: (e) => toast.error(e.message),
-  });
-  const updateMut = trpc.accounts.update.useMutation({
-    onSuccess: () => { utils.accounts.invalidate(); toast.success("勘定科目を更新しました"); setDialogOpen(false); },
-    onError: (e) => toast.error(e.message),
-  });
-  const deleteMut = trpc.accounts.delete.useMutation({
-    onSuccess: () => { utils.accounts.invalidate(); toast.success("勘定科目を削除しました"); },
-    onError: (e) => toast.error(e.message),
-  });
+  const filtered = useMemo(() => {
+    if (!accounts) return [];
+    return filterType === "all" ? accounts : accounts.filter(a => a.type === filterType);
+  }, [accounts, filterType]);
 
   const grouped = useMemo(() => {
-    const groups: Record<string, typeof accountsList> = { income: [], expense: [], asset: [], liability: [] };
-    if (accountsList) {
-      for (const a of accountsList) {
-        if (groups[a.type]) groups[a.type]!.push(a);
-      }
-    }
-    return groups;
-  }, [accountsList]);
+    const g: Record<string, typeof filtered> = {};
+    for (const a of filtered) { if (!g[a.type]) g[a.type] = []; g[a.type].push(a); }
+    return g;
+  }, [filtered]);
 
-  function openCreate() {
-    setEditingId(null);
-    setForm({ ...emptyForm, type: activeTab as any });
-    setDialogOpen(true);
-  }
-
-  function openEdit(account: any) {
-    setEditingId(account.id);
-    setForm({ name: account.name, type: account.type, code: account.code || "", description: account.description || "" });
-    setDialogOpen(true);
-  }
-
-  function handleSubmit() {
+  function openCreate() { setEditId(null); setForm(emptyForm); setDialogOpen(true); }
+  function openEdit(a: any) { setEditId(a.id); setForm({ name: a.name, type: a.type, code: a.code || "", description: a.description || "" }); setDialogOpen(true); }
+  function handleSave() {
     if (!form.name.trim()) { toast.error("科目名を入力してください"); return; }
-    if (editingId) {
-      updateMut.mutate({ id: editingId, ...form });
-    } else {
-      createMut.mutate(form);
-    }
+    if (editId) updateMut.mutate({ id: editId, ...form }); else createMut.mutate(form);
   }
-
-  const currentAccounts = grouped[activeTab] || [];
+  function toggleActive(id: number, current: number) { updateMut.mutate({ id, isActive: current ? 0 : 1 }); }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">勘定科目</h1>
+          <h1 className="text-2xl font-bold tracking-tight">勘定科目</h1>
           <p className="text-muted-foreground text-sm mt-1">カテゴリ別の勘定科目管理</p>
         </div>
-        <Button onClick={openCreate} className="gap-2">
-          <Plus className="h-4 w-4" />
-          科目を追加
-        </Button>
+        <Button onClick={openCreate} className="glow-primary gap-1.5" size="sm"><Plus className="h-4 w-4" />科目を追加</Button>
+      </div>
+      <div className="page-header-line" />
+
+      <div className="flex gap-2 flex-wrap">
+        {["all", "income", "expense", "asset", "liability"].map(t => (
+          <Button key={t} variant={filterType === t ? "default" : "outline"} size="sm" onClick={() => setFilterType(t)} className={`h-8 text-xs rounded-full ${filterType === t ? "" : ""}`}>
+            {t === "all" ? "すべて" : typeConfig[t]?.label}
+            {t !== "all" && accounts && <span className="ml-1.5 opacity-60">({accounts.filter(a => a.type === t).length})</span>}
+          </Button>
+        ))}
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4 max-w-lg">
-          <TabsTrigger value="expense">経費 ({grouped.expense?.length || 0})</TabsTrigger>
-          <TabsTrigger value="income">収入 ({grouped.income?.length || 0})</TabsTrigger>
-          <TabsTrigger value="asset">資産 ({grouped.asset?.length || 0})</TabsTrigger>
-          <TabsTrigger value="liability">負債 ({grouped.liability?.length || 0})</TabsTrigger>
-        </TabsList>
-
-        {["expense", "income", "asset", "liability"].map((type) => (
-          <TabsContent key={type} value={type}>
-            <Card>
-              <CardContent className="p-0">
-                {isLoading ? (
-                  <div className="p-8 text-center text-muted-foreground text-sm">読み込み中...</div>
-                ) : (grouped[type] || []).length === 0 ? (
-                  <div className="p-12 text-center">
-                    <BookOpen className="h-10 w-10 text-muted-foreground/40 mx-auto mb-3" />
-                    <p className="text-muted-foreground text-sm">勘定科目がありません</p>
-                    <Button variant="outline" className="mt-4" onClick={openCreate}>科目を追加する</Button>
-                  </div>
-                ) : (
-                  <div className="divide-y">
-                    {(grouped[type] || []).map((account) => (
-                      <div key={account.id} className="flex items-center justify-between p-4 hover:bg-accent/30 transition-colors">
-                        <div className="flex items-center gap-4">
-                          <div className="h-10 w-10 rounded-lg bg-primary/5 flex items-center justify-center">
-                            <span className="text-xs font-mono font-medium text-primary">{account.code || "--"}</span>
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-medium">{account.name}</p>
-                              {account.isDefault === 1 && (
-                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">デフォルト</Badge>
-                              )}
-                            </div>
-                            {account.description && (
-                              <p className="text-xs text-muted-foreground mt-0.5">{account.description}</p>
-                            )}
-                          </div>
+      {isLoading ? (
+        <div className="grid gap-4 sm:grid-cols-2">{[...Array(4)].map((_, i) => <div key={i} className="h-40 shimmer rounded-xl" />)}</div>
+      ) : Object.keys(grouped).length === 0 ? (
+        <Card className="shadow-sm">
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="h-14 w-14 rounded-2xl bg-muted flex items-center justify-center mb-4"><BookOpen className="h-6 w-6 text-muted-foreground" /></div>
+            <p className="text-base font-medium">勘定科目がありません</p>
+            <Button onClick={openCreate} variant="outline" size="sm" className="mt-4 gap-1"><Plus className="h-3.5 w-3.5" />科目を追加</Button>
+          </div>
+        </Card>
+      ) : (
+        <div className="space-y-5">
+          {Object.entries(grouped).map(([type, items]) => (
+            <Card key={type} className="shadow-sm overflow-hidden">
+              <CardHeader className="pb-0 pt-4 px-5">
+                <div className="flex items-center gap-2">
+                  <Tag className="h-4 w-4 text-muted-foreground" />
+                  <CardTitle className="text-sm font-semibold">{typeConfig[type]?.label ?? type}</CardTitle>
+                  <span className="text-xs text-muted-foreground">({items.length}件)</span>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0 mt-3">
+                <div className="divide-y">
+                  {items.map(a => (
+                    <div key={a.id} className={`flex items-center justify-between px-5 py-3 hover:bg-muted/20 transition-colors ${!a.isActive ? "opacity-40" : ""}`}>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 ${typeConfig[a.type]?.bg ?? "bg-muted"}`}>
+                          <span className="text-[11px] font-bold font-mono">{a.code || "#"}</span>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(account)}>
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          {account.isDefault !== 1 && (
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => { if (confirm("この勘定科目を削除しますか？")) deleteMut.mutate({ id: account.id }); }}>
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium truncate">{a.name}</p>
+                            {a.isDefault === 1 && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">デフォルト</Badge>}
+                          </div>
+                          {a.description && <p className="text-xs text-muted-foreground truncate mt-0.5">{a.description}</p>}
                         </div>
                       </div>
-                    ))}
-                  </div>
-                )}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Switch checked={!!a.isActive} onCheckedChange={() => toggleActive(a.id, a.isActive)} className="scale-90" />
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(a)}><Pencil className="h-3.5 w-3.5" /></Button>
+                        {a.isDefault !== 1 && (
+                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => { if (confirm("この科目を削除しますか？")) deleteMut.mutate({ id: a.id }); }}><Trash2 className="h-3.5 w-3.5" /></Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </CardContent>
             </Card>
-          </TabsContent>
-        ))}
-      </Tabs>
+          ))}
+        </div>
+      )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{editingId ? "勘定科目を編集" : "勘定科目を追加"}</DialogTitle>
-          </DialogHeader>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader><DialogTitle className="text-lg">{editId ? "科目を編集" : "科目を追加"}</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
-            <div>
-              <Label className="text-sm mb-1.5 block">種別</Label>
-              <Select value={form.type} onValueChange={(v: any) => setForm({ ...form, type: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="income">収入</SelectItem>
-                  <SelectItem value="expense">経費</SelectItem>
-                  <SelectItem value="asset">資産</SelectItem>
-                  <SelectItem value="liability">負債</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="col-span-2">
-                <Label className="text-sm mb-1.5 block">科目名</Label>
-                <Input placeholder="例: 旅費交通費" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="text-xs font-medium mb-1.5 block">種別</Label>
+                <Select value={form.type} onValueChange={v => setForm(f => ({ ...f, type: v as any }))}>
+                  <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="income">収入</SelectItem><SelectItem value="expense">支出</SelectItem>
+                    <SelectItem value="asset">資産</SelectItem><SelectItem value="liability">負債</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              <div>
-                <Label className="text-sm mb-1.5 block">コード</Label>
-                <Input placeholder="例: 230" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
-              </div>
+              <div><Label className="text-xs font-medium mb-1.5 block">科目コード</Label><Input placeholder="例: 100" value={form.code} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} className="h-10" /></div>
             </div>
-            <div>
-              <Label className="text-sm mb-1.5 block">説明（任意）</Label>
-              <Input placeholder="科目の説明" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-            </div>
+            <div><Label className="text-xs font-medium mb-1.5 block">科目名</Label><Input placeholder="例: 旅費交通費" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="h-10" /></div>
+            <div><Label className="text-xs font-medium mb-1.5 block">説明（任意）</Label><Input placeholder="科目の説明" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className="h-10" /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>キャンセル</Button>
-            <Button onClick={handleSubmit} disabled={createMut.isPending || updateMut.isPending}>
-              {editingId ? "更新" : "追加"}
-            </Button>
+            <Button onClick={handleSave} disabled={createMut.isPending || updateMut.isPending} className="glow-primary">{editId ? "更新" : "追加"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
