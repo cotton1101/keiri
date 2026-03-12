@@ -1,17 +1,10 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, decimal, date, bigint } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
- * Extend this file with additional tables as your product grows.
- * Columns use camelCase to match both database fields and generated types.
  */
 export const users = mysqlTable("users", {
-  /**
-   * Surrogate primary key. Auto-incremented numeric value managed by the database.
-   * Use this for relations between tables.
-   */
   id: int("id").autoincrement().primaryKey(),
-  /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
@@ -25,4 +18,158 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
-// TODO: Add your tables here
+/**
+ * Business profile - 事業者情報
+ */
+export const businessProfiles = mysqlTable("business_profiles", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  businessName: varchar("businessName", { length: 255 }).notNull().default(""),
+  representativeName: varchar("representativeName", { length: 255 }).notNull().default(""),
+  postalCode: varchar("postalCode", { length: 10 }).notNull().default(""),
+  address: text("address"),
+  phone: varchar("phone", { length: 20 }).notNull().default(""),
+  email: varchar("email", { length: 320 }).notNull().default(""),
+  taxId: varchar("taxId", { length: 50 }).notNull().default(""),
+  bankName: varchar("bankName", { length: 100 }).notNull().default(""),
+  bankBranch: varchar("bankBranch", { length: 100 }).notNull().default(""),
+  bankAccountType: varchar("bankAccountType", { length: 20 }).notNull().default(""),
+  bankAccountNumber: varchar("bankAccountNumber", { length: 20 }).notNull().default(""),
+  bankAccountName: varchar("bankAccountName", { length: 100 }).notNull().default(""),
+  fiscalYearStart: int("fiscalYearStart").notNull().default(1),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type BusinessProfile = typeof businessProfiles.$inferSelect;
+export type InsertBusinessProfile = typeof businessProfiles.$inferInsert;
+
+/**
+ * Account categories - 勘定科目カテゴリ
+ */
+export const accountCategories = mysqlTable("account_categories", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  name: varchar("name", { length: 100 }).notNull(),
+  type: mysqlEnum("type", ["income", "expense", "asset", "liability"]).notNull(),
+  sortOrder: int("sortOrder").notNull().default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AccountCategory = typeof accountCategories.$inferSelect;
+export type InsertAccountCategory = typeof accountCategories.$inferInsert;
+
+/**
+ * Accounts - 勘定科目
+ */
+export const accounts = mysqlTable("accounts", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  categoryId: int("categoryId"),
+  name: varchar("name", { length: 100 }).notNull(),
+  type: mysqlEnum("type", ["income", "expense", "asset", "liability"]).notNull(),
+  code: varchar("code", { length: 10 }).notNull().default(""),
+  description: text("description"),
+  isDefault: int("isDefault").notNull().default(0),
+  isActive: int("isActive").notNull().default(1),
+  sortOrder: int("sortOrder").notNull().default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Account = typeof accounts.$inferSelect;
+export type InsertAccount = typeof accounts.$inferInsert;
+
+/**
+ * Transactions - 取引
+ */
+export const transactions = mysqlTable("transactions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  type: mysqlEnum("type", ["income", "expense"]).notNull(),
+  accountId: int("accountId").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 0 }).notNull(),
+  date: bigint("date", { mode: "number" }).notNull(),
+  description: varchar("description", { length: 500 }).notNull().default(""),
+  memo: text("memo"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Transaction = typeof transactions.$inferSelect;
+export type InsertTransaction = typeof transactions.$inferInsert;
+
+/**
+ * Clients - 取引先
+ */
+export const clients = mysqlTable("clients", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  contactPerson: varchar("contactPerson", { length: 255 }).notNull().default(""),
+  email: varchar("email", { length: 320 }).notNull().default(""),
+  phone: varchar("phone", { length: 20 }).notNull().default(""),
+  postalCode: varchar("postalCode", { length: 10 }).notNull().default(""),
+  address: text("address"),
+  memo: text("memo"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Client = typeof clients.$inferSelect;
+export type InsertClient = typeof clients.$inferInsert;
+
+/**
+ * Invoices - 請求書
+ */
+export const invoices = mysqlTable("invoices", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  clientId: int("clientId"),
+  invoiceNumber: varchar("invoiceNumber", { length: 50 }).notNull(),
+  status: mysqlEnum("status", ["draft", "sent", "paid", "overdue", "cancelled"]).notNull().default("draft"),
+  issueDate: bigint("issueDate", { mode: "number" }).notNull(),
+  dueDate: bigint("dueDate", { mode: "number" }).notNull(),
+  subtotal: decimal("subtotal", { precision: 12, scale: 0 }).notNull().default("0"),
+  taxRate: decimal("taxRate", { precision: 5, scale: 2 }).notNull().default("10.00"),
+  taxAmount: decimal("taxAmount", { precision: 12, scale: 0 }).notNull().default("0"),
+  totalAmount: decimal("totalAmount", { precision: 12, scale: 0 }).notNull().default("0"),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Invoice = typeof invoices.$inferSelect;
+export type InsertInvoice = typeof invoices.$inferInsert;
+
+/**
+ * Invoice items - 請求書明細
+ */
+export const invoiceItems = mysqlTable("invoice_items", {
+  id: int("id").autoincrement().primaryKey(),
+  invoiceId: int("invoiceId").notNull(),
+  description: varchar("description", { length: 500 }).notNull(),
+  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull().default("1.00"),
+  unitPrice: decimal("unitPrice", { precision: 12, scale: 0 }).notNull(),
+  amount: decimal("amount", { precision: 12, scale: 0 }).notNull(),
+  sortOrder: int("sortOrder").notNull().default(0),
+});
+
+export type InvoiceItem = typeof invoiceItems.$inferSelect;
+export type InsertInvoiceItem = typeof invoiceItems.$inferInsert;
+
+/**
+ * Subscription plans - サブスクリプション
+ */
+export const subscriptions = mysqlTable("subscriptions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  plan: mysqlEnum("plan", ["free", "premium"]).notNull().default("free"),
+  startDate: bigint("startDate", { mode: "number" }),
+  endDate: bigint("endDate", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Subscription = typeof subscriptions.$inferSelect;
+export type InsertSubscription = typeof subscriptions.$inferInsert;
