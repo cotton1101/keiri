@@ -1,4 +1,4 @@
-import { COOKIE_NAME } from "@shared/const";
+import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
@@ -7,6 +7,7 @@ import { z } from "zod";
 import * as db from "./db";
 import { notifyOwner } from "./_core/notification";
 import { createCheckoutSession, createPortalSession, getCheckoutSession } from "./stripe";
+import { registerUser, loginUser } from "./auth";
 
 // Admin-only procedure
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -18,6 +19,33 @@ export const appRouter = router({
   system: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
+    register: publicProcedure.input(z.object({
+      email: z.string().email("有効なメールアドレスを入力してください"),
+      password: z.string().min(8, "パスワードは8文字以上で入力してください"),
+      name: z.string().min(1, "名前を入力してください"),
+    })).mutation(async ({ ctx, input }) => {
+      try {
+        const { user, token } = await registerUser(input.email, input.password, input.name);
+        const cookieOptions = getSessionCookieOptions(ctx.req);
+        ctx.res.cookie(COOKIE_NAME, token, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+        return { success: true, user: { id: user.id, name: user.name, email: user.email, role: user.role } };
+      } catch (error: any) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: error.message || "登録に失敗しました" });
+      }
+    }),
+    login: publicProcedure.input(z.object({
+      email: z.string().email("有効なメールアドレスを入力してください"),
+      password: z.string().min(1, "パスワードを入力してください"),
+    })).mutation(async ({ ctx, input }) => {
+      try {
+        const { user, token } = await loginUser(input.email, input.password);
+        const cookieOptions = getSessionCookieOptions(ctx.req);
+        ctx.res.cookie(COOKIE_NAME, token, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+        return { success: true, user: { id: user.id, name: user.name, email: user.email, role: user.role } };
+      } catch (error: any) {
+        throw new TRPCError({ code: "UNAUTHORIZED", message: error.message || "ログインに失敗しました" });
+      }
+    }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });

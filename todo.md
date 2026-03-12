@@ -63,3 +63,17 @@
 - [x] サブスク状態の同期（Stripe ↔ DB）
 - [x] 管理者画面のサブスク管理にStripe情報表示
 - [x] テスト追加・全テストパス（57テスト全パス）
+
+## v5 - メールアドレス認証への切り替え
+- [x] usersテーブルにpasswordHashカラム追加
+- [x] bcryptパッケージインストール
+- [x] サーバー側: 新規登録API（/api/auth/register）
+- [x] サーバー側: ログインAPI（/api/auth/login）
+- [x] サーバー側: セッション管理（JWT Cookie）
+- [x] tRPCルーター: auth.register / auth.login 追加
+- [x] フロントエンド: ログインページ作成
+- [x] フロントエンド: 新規登録ページ作成
+- [x] App.tsx: ルーティング更新（OAuth関連を削除）
+- [x] DashboardLayout: ログインリンク更新
+- [x] 既存の管理者ユーザーにパスワード設定
+- [x] テスト更新・全テストパス（62テスト全パス）

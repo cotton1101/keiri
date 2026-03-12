@@ -7,6 +7,26 @@ vi.mock("./_core/notification", () => ({
   notifyOwner: vi.fn(async () => true),
 }));
 
+// Mock auth module
+vi.mock("./auth", () => ({
+  registerUser: vi.fn(async (email: string, password: string, name: string) => {
+    return {
+      user: { id: 99, openId: "email-test", email, name, role: "user", passwordHash: "hashed", createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date(), loginMethod: "email" },
+      token: "test-jwt-token",
+    };
+  }),
+  loginUser: vi.fn(async (email: string, password: string) => {
+    if (email === "test@example.com" && password === "password123") {
+      return {
+        user: { id: 1, openId: "test-user-001", email, name: "Test User", role: "user", passwordHash: "hashed", createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date(), loginMethod: "email" },
+        token: "test-jwt-token",
+      };
+    }
+    throw new Error("メールアドレスまたはパスワードが正しくありません");
+  }),
+  authenticateRequest: vi.fn(async () => null),
+}));
+
 // Mock stripe module
 vi.mock("./stripe", () => ({
   createCheckoutSession: vi.fn(async (params: any) => ({
@@ -226,6 +246,10 @@ vi.mock("./db", () => {
     // Required exports
     upsertUser: vi.fn(),
     getUserByOpenId: vi.fn(),
+    getUserByEmail: vi.fn(async (email: string) => {
+      if (email === "test@example.com") return { id: 1, openId: "test-user-001", email, name: "Test User", role: "user", passwordHash: "hashed" };
+      return null;
+    }),
     getDb: vi.fn(async () => null),
   };
 });
@@ -235,24 +259,26 @@ type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 function createAuthContext(): TrpcContext {
   const user: AuthenticatedUser = {
     id: 1, openId: "test-user-001", email: "test@example.com", name: "Test User",
-    loginMethod: "manus", role: "user", createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date(),
+    loginMethod: "email", role: "user", passwordHash: "hashed",
+    createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date(),
   };
   return {
     user,
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
-    res: { clearCookie: vi.fn() } as unknown as TrpcContext["res"],
+    res: { clearCookie: vi.fn(), cookie: vi.fn() } as unknown as TrpcContext["res"],
   };
 }
 
 function createAdminContext(): TrpcContext {
   const user: AuthenticatedUser = {
     id: 1, openId: "admin-user-001", email: "admin@example.com", name: "Admin User",
-    loginMethod: "manus", role: "admin", createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date(),
+    loginMethod: "email", role: "admin", passwordHash: "hashed",
+    createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date(),
   };
   return {
     user,
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
-    res: { clearCookie: vi.fn() } as unknown as TrpcContext["res"],
+    res: { clearCookie: vi.fn(), cookie: vi.fn() } as unknown as TrpcContext["res"],
   };
 }
 
@@ -765,6 +791,69 @@ describe("Stripe Subscription (決済連携)", () => {
     const ctx = createAuthContext();
     const caller = appRouter.createCaller(ctx);
     const result = await caller.subscription.update({ plan: "premium" });
+    expect(result).toEqual({ success: true });
+  });
+});
+
+// ===== Auth (メール認証) =====
+describe("Auth (メール認証)", () => {
+  function createUnauthContext(): TrpcContext {
+    return {
+      user: null,
+      req: { protocol: "https", headers: { origin: "https://example.com" } } as TrpcContext["req"],
+      res: { clearCookie: vi.fn(), cookie: vi.fn() } as unknown as TrpcContext["res"],
+    };
+  }
+
+  it("registers a new user", async () => {
+    const ctx = createUnauthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.auth.register({
+      email: "newuser@example.com",
+      password: "SecurePass123",
+      name: "New User",
+    });
+    expect(result).toHaveProperty("success", true);
+    expect(result).toHaveProperty("user");
+    expect(result.user).toHaveProperty("email", "newuser@example.com");
+    expect(result.user).toHaveProperty("name", "New User");
+  });
+
+  it("logs in with valid credentials", async () => {
+    const ctx = createUnauthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.auth.login({
+      email: "test@example.com",
+      password: "password123",
+    });
+    expect(result).toHaveProperty("success", true);
+    expect(result).toHaveProperty("user");
+    expect(result.user).toHaveProperty("email", "test@example.com");
+  });
+
+  it("rejects login with invalid credentials", async () => {
+    const ctx = createUnauthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.auth.login({
+        email: "test@example.com",
+        password: "wrongpassword",
+      })
+    ).rejects.toThrow();
+  });
+
+  it("returns current user via me query", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.auth.me();
+    expect(result).toHaveProperty("id", 1);
+    expect(result).toHaveProperty("email", "test@example.com");
+  });
+
+  it("logs out successfully", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.auth.logout();
     expect(result).toEqual({ success: true });
   });
 });

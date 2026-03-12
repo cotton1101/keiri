@@ -2,7 +2,6 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getLoginUrl } from "@/const";
 import { useLocation } from "wouter";
 import { useEffect } from "react";
 import {
@@ -41,10 +40,10 @@ export default function Landing() {
           </nav>
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="sm" asChild>
-              <a href={getLoginUrl()}>ログイン</a>
+              <a href="/login">ログイン</a>
             </Button>
             <Button size="sm" className="glow-primary" asChild>
-              <a href={getLoginUrl()}>無料で始める <ArrowRight className="h-4 w-4 ml-1" /></a>
+              <a href="/register">無料で始める <ArrowRight className="h-4 w-4 ml-1" /></a>
             </Button>
           </div>
         </div>
@@ -74,7 +73,7 @@ export default function Landing() {
             </p>
             <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
               <Button size="lg" className="glow-primary text-base px-8 h-12" asChild>
-                <a href={getLoginUrl()}>
+                <a href="/register">
                   無料で始める
                   <ArrowRight className="h-5 w-5 ml-2" />
                 </a>
@@ -226,7 +225,7 @@ export default function Landing() {
                   <span className="text-muted-foreground ml-1">/月</span>
                 </div>
                 <Button variant="outline" className="w-full mb-8" asChild>
-                  <a href={getLoginUrl()}>無料で始める</a>
+                  <a href="/register">無料で始める</a>
                 </Button>
                 <div className="space-y-3">
                   {[
@@ -259,7 +258,7 @@ export default function Landing() {
                   <span className="text-muted-foreground ml-1">/月（税込）</span>
                 </div>
                 <Button className="w-full mb-8 glow-primary" asChild>
-                  <a href={getLoginUrl()}>プレミアムを始める</a>
+                  <a href="/register">プレミアムを始める</a>
                 </Button>
                 <div className="space-y-3">
                   {[
@@ -386,7 +385,7 @@ export default function Landing() {
             無料プランで今すぐ始められます。クレジットカードは不要です。
           </p>
           <Button size="lg" className="glow-primary text-base px-10 h-12" asChild>
-            <a href={getLoginUrl()}>
+            <a href="/register">
               無料アカウントを作成
               <ArrowRight className="h-5 w-5 ml-2" />
             </a>

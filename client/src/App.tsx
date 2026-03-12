@@ -8,6 +8,8 @@ import DashboardLayout from "./components/DashboardLayout";
 import { lazy, Suspense } from "react";
 
 const Landing = lazy(() => import("./pages/Landing"));
+const Login = lazy(() => import("./pages/Login"));
+const Register = lazy(() => import("./pages/Register"));
 const Home = lazy(() => import("./pages/Home"));
 const Transactions = lazy(() => import("./pages/Transactions"));
 const Accounts = lazy(() => import("./pages/Accounts"));
@@ -68,6 +70,8 @@ function Router() {
     <Suspense fallback={<PageLoader />}>
       <Switch>
         <Route path="/" component={Landing} />
+        <Route path="/login" component={Login} />
+        <Route path="/register" component={Register} />
         <Route>
           <AppRoutes />
         </Route>
