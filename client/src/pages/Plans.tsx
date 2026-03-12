@@ -3,13 +3,62 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Check, Sparkles, Zap, X, Shield, Clock, BarChart3, FileText, Download, Headphones } from "lucide-react";
+import { Check, Sparkles, Zap, X, Shield, Clock, Headphones, Loader2, ExternalLink, CreditCard, PartyPopper } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 export default function Plans() {
   const utils = trpc.useUtils();
-  const { data: subscription } = trpc.subscription.get.useQuery();
-  const updateMut = trpc.subscription.update.useMutation({ onSuccess: () => { utils.subscription.invalidate(); toast.success("プランを変更しました"); } });
+  const { data: subscription, isLoading: subLoading } = trpc.subscription.get.useQuery();
   const currentPlan = subscription?.plan || "free";
+  const hasStripeCustomer = !!subscription?.stripeCustomerId;
+
+  // Stripe Checkout
+  const checkoutMut = trpc.subscription.createCheckout.useMutation({
+    onSuccess: (data) => {
+      if (data.url) {
+        toast.info("Stripeの決済ページに移動します...");
+        window.open(data.url, "_blank");
+      }
+    },
+    onError: (err) => toast.error(err.message || "決済セッションの作成に失敗しました"),
+  });
+
+  // Stripe Customer Portal
+  const portalMut = trpc.subscription.createPortal.useMutation({
+    onSuccess: (data) => {
+      if (data.url) {
+        toast.info("Stripeの管理ポータルに移動します...");
+        window.open(data.url, "_blank");
+      }
+    },
+    onError: (err) => toast.error(err.message || "ポータルの作成に失敗しました"),
+  });
+
+  // Check for success/cancel from URL params
+  const [showSuccess, setShowSuccess] = useState(false);
+  const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
+
+  useEffect(() => {
+    const status = searchParams.get("status");
+    const sessionId = searchParams.get("session_id");
+    if (status === "success" && sessionId) {
+      setShowSuccess(true);
+      utils.subscription.invalidate();
+      // Clean URL
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (status === "cancelled") {
+      toast.info("決済がキャンセルされました");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [searchParams, utils.subscription]);
+
+  const handleUpgrade = () => {
+    checkoutMut.mutate({ origin: window.location.origin });
+  };
+
+  const handleManageSubscription = () => {
+    portalMut.mutate({ origin: window.location.origin });
+  };
 
   const plans = [
     {
@@ -48,6 +97,26 @@ export default function Plans() {
 
   return (
     <div className="space-y-8">
+      {/* Success Banner */}
+      {showSuccess && (
+        <div className="max-w-4xl mx-auto">
+          <Card className="border-emerald-500/30 bg-emerald-500/5 shadow-lg shadow-emerald-500/5">
+            <CardContent className="p-6 flex items-center gap-4">
+              <div className="h-14 w-14 rounded-2xl bg-emerald-500/10 flex items-center justify-center shrink-0">
+                <PartyPopper className="h-7 w-7 text-emerald-600" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-bold text-emerald-700">プレミアムプランへようこそ！</h3>
+                <p className="text-sm text-emerald-600/80 mt-1">決済が完了しました。すべての機能がご利用いただけます。</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setShowSuccess(false)} className="border-emerald-500/30 text-emerald-700 hover:bg-emerald-500/10">
+                閉じる
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       <div className="text-center max-w-xl mx-auto">
         <Badge variant="outline" className="mb-4 text-xs px-3 py-1">シンプルな料金体系</Badge>
         <h1 className="text-3xl font-bold tracking-tight">あなたに合ったプランを</h1>
@@ -82,14 +151,45 @@ export default function Plans() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-5 pb-6">
-                <Button
-                  className={`w-full h-11 font-semibold ${isPremium && !isCurrent ? "glow-primary" : ""}`}
-                  variant={isCurrent ? "outline" : isPremium ? "default" : "outline"}
-                  disabled={isCurrent || updateMut.isPending}
-                  onClick={() => { if (!isCurrent) toast.info("プラン変更機能は近日公開予定です"); }}
-                >
-                  {isCurrent ? "現在のプラン" : isPremium ? "プレミアムにアップグレード" : "フリープランに変更"}
-                </Button>
+                {/* Action Buttons */}
+                {isPremium ? (
+                  isCurrent ? (
+                    <div className="space-y-2">
+                      <Button className="w-full h-11 font-semibold" variant="outline" disabled>
+                        <Check className="h-4 w-4 mr-2" />現在のプラン
+                      </Button>
+                      {hasStripeCustomer && (
+                        <Button
+                          className="w-full h-10 text-sm"
+                          variant="ghost"
+                          onClick={handleManageSubscription}
+                          disabled={portalMut.isPending}
+                        >
+                          {portalMut.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CreditCard className="h-4 w-4 mr-2" />}
+                          サブスクリプションを管理
+                          <ExternalLink className="h-3 w-3 ml-1" />
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <Button
+                      className="w-full h-11 font-semibold glow-primary"
+                      onClick={handleUpgrade}
+                      disabled={checkoutMut.isPending || subLoading}
+                    >
+                      {checkoutMut.isPending ? (
+                        <><Loader2 className="h-4 w-4 mr-2 animate-spin" />決済ページを準備中...</>
+                      ) : (
+                        <><Zap className="h-4 w-4 mr-2" />プレミアムにアップグレード</>
+                      )}
+                    </Button>
+                  )
+                ) : (
+                  <Button className="w-full h-11 font-semibold" variant="outline" disabled={isCurrent}>
+                    {isCurrent ? <><Check className="h-4 w-4 mr-2" />現在のプラン</> : "フリープランに変更"}
+                  </Button>
+                )}
+
                 <div className="space-y-2.5">
                   {plan.features.map((f, i) => (
                     <div key={i} className={`flex items-start gap-2.5 ${!f.included ? "opacity-40" : ""}`}>
@@ -143,11 +243,33 @@ export default function Plans() {
         </CardContent>
       </Card>
 
+      {/* Payment Info */}
+      {currentPlan === "premium" && hasStripeCustomer && (
+        <Card className="max-w-4xl mx-auto shadow-sm">
+          <CardContent className="p-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                  <CreditCard className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold">お支払い情報</p>
+                  <p className="text-xs text-muted-foreground">カード情報の変更や請求書の確認はStripeポータルから行えます</p>
+                </div>
+              </div>
+              <Button variant="outline" size="sm" onClick={handleManageSubscription} disabled={portalMut.isPending}>
+                {portalMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <><ExternalLink className="h-3.5 w-3.5 mr-1.5" />管理ポータル</>}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Trust indicators */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-4xl mx-auto">
         {[
-          { icon: Shield, title: "安心のセキュリティ", desc: "SSL暗号化通信でデータを保護" },
-          { icon: Clock, title: "いつでも解約OK", desc: "契約期間の縛りなし" },
+          { icon: Shield, title: "安心のセキュリティ", desc: "SSL暗号化・Stripe決済で安全" },
+          { icon: Clock, title: "いつでも解約OK", desc: "契約期間の縛りなし・即時解約" },
           { icon: Headphones, title: "充実のサポート", desc: "プレミアムは優先対応" },
         ].map((item, i) => (
           <Card key={i} className="shadow-sm">
@@ -157,6 +279,23 @@ export default function Plans() {
             </CardContent>
           </Card>
         ))}
+      </div>
+
+      {/* Test card info for development */}
+      <div className="max-w-4xl mx-auto">
+        <Card className="shadow-sm border-dashed border-amber-500/30 bg-amber-500/5">
+          <CardContent className="p-4 flex items-start gap-3">
+            <div className="h-9 w-9 rounded-lg bg-amber-500/10 flex items-center justify-center shrink-0">
+              <CreditCard className="h-4 w-4 text-amber-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-amber-700">テスト決済について</p>
+              <p className="text-xs text-amber-600/80 mt-0.5">
+                テスト環境では、カード番号 <code className="bg-amber-500/10 px-1.5 py-0.5 rounded font-mono">4242 4242 4242 4242</code>（有効期限: 任意の未来日、CVC: 任意の3桁）でテスト決済が可能です。
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

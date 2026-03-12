@@ -29,6 +29,13 @@
       "when": 1773276908593,
       "tag": "0003_tricky_cannonball",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1773279282995,
+      "tag": "0004_faulty_legion",
+      "breakpoints": true
     }
   ]
 }

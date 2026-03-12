@@ -50,3 +50,16 @@
 - [x] バックエンドAPI拡張（管理者API、メール送信API、税金計算API）
 - [x] 無料プランの取引入力上限を15件に制限（バックエンド＋フロントエンド）
 - [x] テスト追加・全テストパス（51テスト全パス）
+
+## v4 - Stripe決済連携
+- [x] Stripe機能セットアップ（webdev_add_feature）
+- [x] Stripe APIキー設定（自動設定済み）
+- [x] DBスキーマ拡張（Stripe顧客ID・サブスクリプションID）
+- [x] Stripe Checkout Session作成API
+- [x] Stripe Webhookハンドラ（サブスク開始・更新・キャンセル）
+- [x] Stripe Customer Portal API
+- [x] プラン画面にStripe決済ボタン統合
+- [x] 決済成功・キャンセルページ
+- [x] サブスク状態の同期（Stripe ↔ DB）
+- [x] 管理者画面のサブスク管理にStripe情報表示
+- [x] テスト追加・全テストパス（57テスト全パス）

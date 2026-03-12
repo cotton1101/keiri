@@ -6,6 +6,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "./db";
 import { notifyOwner } from "./_core/notification";
+import { createCheckoutSession, createPortalSession, getCheckoutSession } from "./stripe";
 
 // Admin-only procedure
 const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
@@ -315,6 +316,54 @@ export const appRouter = router({
     })).mutation(async ({ ctx, input }) => {
       await db.upsertSubscription(ctx.user.id, input.plan);
       return { success: true };
+    }),
+    // Stripe Checkout Session
+    createCheckout: protectedProcedure.input(z.object({
+      origin: z.string(),
+    })).mutation(async ({ ctx, input }) => {
+      const sub = await db.getSubscription(ctx.user.id);
+      const result = await createCheckoutSession({
+        userId: ctx.user.id,
+        userEmail: ctx.user.email || "",
+        userName: ctx.user.name || "",
+        origin: input.origin,
+        existingStripeCustomerId: sub?.stripeCustomerId,
+      });
+      return result;
+    }),
+    // Stripe Customer Portal
+    createPortal: protectedProcedure.input(z.object({
+      origin: z.string(),
+    })).mutation(async ({ ctx, input }) => {
+      const sub = await db.getSubscription(ctx.user.id);
+      if (!sub?.stripeCustomerId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Stripe顧客情報が見つかりません" });
+      }
+      return createPortalSession({
+        stripeCustomerId: sub.stripeCustomerId,
+        origin: input.origin,
+      });
+    }),
+    // Verify checkout session
+    verifySession: protectedProcedure.input(z.object({
+      sessionId: z.string(),
+    })).query(async ({ ctx, input }) => {
+      try {
+        const session = await getCheckoutSession(input.sessionId);
+        const userId = parseInt(session.client_reference_id || "0");
+        if (userId === ctx.user.id && session.payment_status === "paid") {
+          // Ensure subscription is updated
+          await db.upsertSubscription(ctx.user.id, "premium", {
+            stripeCustomerId: session.customer as string,
+            stripeSubscriptionId: session.subscription as string,
+            stripeStatus: "active",
+          });
+          return { success: true, status: "paid" as const };
+        }
+        return { success: false, status: session.payment_status as string };
+      } catch {
+        return { success: false, status: "error" };
+      }
     }),
   }),
 

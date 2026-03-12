@@ -1,0 +1,9 @@
+{
+  "query": "ALTER TABLE `subscriptions` ADD `stripeCustomerId` varchar(255); ALTER TABLE `subscriptions` ADD `stripeSubscriptionId` varchar(255); ALTER TABLE `subscriptions` ADD `stripeStatus` varchar(50);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2i2tq1wQBHQKUJk.root --database N7pqhjqgTkSHo6YBuvuD3Q --execute ALTER TABLE `subscriptions` ADD `stripeCustomerId` varchar(255); ALTER TABLE `subscriptions` ADD `stripeSubscriptionId` varchar(255); ALTER TABLE `subscriptions` ADD `stripeStatus` varchar(50);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 2695
+}

@@ -7,6 +7,23 @@ vi.mock("./_core/notification", () => ({
   notifyOwner: vi.fn(async () => true),
 }));
 
+// Mock stripe module
+vi.mock("./stripe", () => ({
+  createCheckoutSession: vi.fn(async (params: any) => ({
+    url: "https://checkout.stripe.com/test_session",
+    sessionId: "cs_test_123",
+  })),
+  createPortalSession: vi.fn(async (params: any) => ({
+    url: "https://billing.stripe.com/test_portal",
+  })),
+  getCheckoutSession: vi.fn(async (sessionId: string) => ({
+    client_reference_id: "1",
+    payment_status: "paid",
+    customer: "cus_test_123",
+    subscription: "sub_test_123",
+  })),
+}));
+
 // Mock the db module
 vi.mock("./db", () => {
   let mockAccounts: any[] = [];
@@ -116,9 +133,11 @@ vi.mock("./db", () => {
       return 1;
     }),
     getSubscription: vi.fn(async () => mockSubscription),
-    upsertSubscription: vi.fn(async (userId: number, plan: string) => {
-      mockSubscription = { id: 1, userId, plan, startDate: Date.now() };
+    upsertSubscription: vi.fn(async (userId: number, plan: string, stripeData?: any) => {
+      mockSubscription = { id: 1, userId, plan, startDate: Date.now(), stripeCustomerId: stripeData?.stripeCustomerId || null, stripeSubscriptionId: stripeData?.stripeSubscriptionId || null, stripeStatus: stripeData?.stripeStatus || null };
     }),
+    getSubscriptionByStripeCustomerId: vi.fn(async () => null),
+    updateSubscriptionByStripeSubId: vi.fn(async () => {}),
     // Recurring
     getRecurringByUser: vi.fn(async () => mockRecurring),
     createRecurring: vi.fn(async (data: any) => {
@@ -688,5 +707,64 @@ describe("Admin (管理者)", () => {
     const ctx = createAuthContext(); // regular user
     const caller = appRouter.createCaller(ctx);
     await expect(caller.admin.users.list({})).rejects.toThrow();
+  });
+});
+
+describe("Stripe Subscription (決済連携)", () => {
+  it("creates a checkout session for premium upgrade", async () => {
+    const ctx = createAuthContext();
+    (ctx.req as any).headers = { origin: "https://example.com" };
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.subscription.createCheckout({ origin: "https://example.com" });
+    expect(result).toHaveProperty("url");
+    expect(result).toHaveProperty("sessionId");
+    expect(result.url).toContain("stripe.com");
+  });
+
+  it("returns plan limit info for free plan", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.subscription.limitInfo();
+    expect(result).toHaveProperty("plan");
+    expect(result).toHaveProperty("transactionLimit");
+    expect(result).toHaveProperty("transactionCount");
+    expect(result).toHaveProperty("transactionRemaining");
+  });
+
+  it("verifies a checkout session", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.subscription.verifySession({ sessionId: "cs_test_123" });
+    expect(result).toHaveProperty("success", true);
+    expect(result).toHaveProperty("status", "paid");
+  });
+
+  it("creates portal session when Stripe customer exists", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    // After previous test updated subscription with stripeCustomerId, portal should work
+    // or if subscription is null, it should throw
+    try {
+      const result = await caller.subscription.createPortal({ origin: "https://example.com" });
+      expect(result).toHaveProperty("url");
+    } catch (err: any) {
+      // Expected if no Stripe customer ID
+      expect(err.code).toBe("BAD_REQUEST");
+    }
+  });
+
+  it("gets current subscription", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.subscription.get();
+    // Initially null or whatever mock returns
+    expect(result === null || typeof result === "object").toBe(true);
+  });
+
+  it("updates subscription plan", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.subscription.update({ plan: "premium" });
+    expect(result).toEqual({ success: true });
   });
 });

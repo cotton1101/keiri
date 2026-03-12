@@ -352,16 +352,41 @@ export async function getSubscription(userId: number) {
   return result.length > 0 ? result[0] : null;
 }
 
-export async function upsertSubscription(userId: number, plan: "free" | "premium") {
+export async function upsertSubscription(userId: number, plan: "free" | "premium", stripeData?: {
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+  stripeStatus?: string;
+}) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   const existing = await getSubscription(userId);
   const now = Date.now();
+  const setData: Record<string, unknown> = { plan, startDate: now };
+  if (stripeData?.stripeCustomerId) setData.stripeCustomerId = stripeData.stripeCustomerId;
+  if (stripeData?.stripeSubscriptionId) setData.stripeSubscriptionId = stripeData.stripeSubscriptionId;
+  if (stripeData?.stripeStatus) setData.stripeStatus = stripeData.stripeStatus;
   if (existing) {
-    await db.update(subscriptions).set({ plan, startDate: now }).where(eq(subscriptions.id, existing.id));
+    await db.update(subscriptions).set(setData).where(eq(subscriptions.id, existing.id));
   } else {
-    await db.insert(subscriptions).values({ userId, plan, startDate: now });
+    await db.insert(subscriptions).values({ userId, plan, startDate: now, ...stripeData });
   }
+}
+
+export async function getSubscriptionByStripeCustomerId(stripeCustomerId: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(subscriptions).where(eq(subscriptions.stripeCustomerId, stripeCustomerId)).limit(1);
+  return result.length > 0 ? result[0] : null;
+}
+
+export async function updateSubscriptionByStripeSubId(stripeSubscriptionId: string, data: Partial<{
+  plan: "free" | "premium";
+  stripeStatus: string;
+  endDate: number;
+}>) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.update(subscriptions).set(data).where(eq(subscriptions.stripeSubscriptionId, stripeSubscriptionId));
 }
 
 // ─── Recurring Transactions (固定費・定期取引) ───
