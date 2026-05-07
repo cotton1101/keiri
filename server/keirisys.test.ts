@@ -69,6 +69,14 @@ vi.mock("./db", () => {
       }
     }),
     getAccountsByUser: vi.fn(async () => mockAccounts),
+    assertAccountsOwnedByUser: vi.fn(async (userId: number, accountIds: number[]) => {
+      const unique = Array.from(new Set(accountIds.filter((id) => Number.isInteger(id) && id > 0)));
+      if (unique.length === 0) throw new Error("Account ID is required");
+      const owned = new Set(mockAccounts.filter(a => a.userId === userId).map(a => a.id));
+      for (const id of unique) {
+        if (!owned.has(id)) throw new Error("Account not found or not owned by user");
+      }
+    }),
     createAccount: vi.fn(async (data: any) => {
       const id = idCounter++;
       mockAccounts.push({ id, ...data, isDefault: 0, isActive: 1, sortOrder: 0, createdAt: new Date() });
@@ -243,6 +251,14 @@ vi.mock("./db", () => {
     calculateHealthInsurance: vi.fn((taxableIncome: number) => {
       return Math.min(Math.floor(taxableIncome * 0.11 + 50000), 1060000);
     }),
+    calculateSalaryDeduction: vi.fn((salaryIncome: number) => {
+      if (salaryIncome <= 1625000) return 550000;
+      if (salaryIncome <= 1800000) return Math.floor(salaryIncome * 0.4 - 100000);
+      if (salaryIncome <= 3600000) return Math.floor(salaryIncome * 0.3 + 80000);
+      if (salaryIncome <= 6600000) return Math.floor(salaryIncome * 0.2 + 440000);
+      if (salaryIncome <= 8500000) return Math.floor(salaryIncome * 0.1 + 1100000);
+      return 1950000;
+    }),
     // Required exports
     upsertUser: vi.fn(),
     getUserByOpenId: vi.fn(),
@@ -366,6 +382,80 @@ describe("Transactions (取引)", () => {
     });
     expect(result).toHaveProperty("count");
     expect(result.count).toBe(2);
+  });
+
+  it("bulkCreate registers multiple sales and purchases at once", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const now = Date.now();
+    const result = await caller.transactions.bulkCreate({
+      items: [
+        { type: "income", accountId: 1, amount: "150000", date: now, description: "売上A" },
+        { type: "income", accountId: 1, amount: "80000", date: now, description: "売上B" },
+        { type: "expense", accountId: 2, amount: "40000", date: now, description: "仕入A" },
+      ],
+    });
+    expect(result.count).toBe(3);
+  });
+
+  it("bulkCreate rejects when accountId is not owned by user", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.transactions.bulkCreate({
+        items: [{ type: "income", accountId: 99999, amount: "1000", date: Date.now() }],
+      }),
+    ).rejects.toThrow(/勘定科目/);
+  });
+
+  it("bulkCreate rejects when account type does not match transaction type", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    // accountId:1 は売上高(income)だが type:"expense" を指定 → 拒否
+    await expect(
+      caller.transactions.bulkCreate({
+        items: [{ type: "expense", accountId: 1, amount: "1000", date: Date.now() }],
+      }),
+    ).rejects.toThrow(/仕入・経費/);
+  });
+
+  it("bulkCreate rejects amount out of range", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.transactions.bulkCreate({
+        items: [{ type: "income", accountId: 1, amount: "9999999999999", date: Date.now() }],
+      }),
+    ).rejects.toThrow(/金額/);
+  });
+
+  it("simulate computes refund when withholdingTax exceeds incomeTax", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.taxFiling.simulate({
+      year: 2026,
+      filingType: "blue",
+      workStyle: "side_business",
+      salaryIncome: 1000000,
+      withholdingTax: 999_999_999,
+    });
+    expect(result.withholdingTax).toBe(999_999_999);
+    expect(result.refundAmount).toBeGreaterThan(0);
+    expect(result.incomeTaxBalance).toBeLessThan(0);
+  });
+
+  it("simulate computes additional payment when incomeTax exceeds withholdingTax", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.taxFiling.simulate({
+      year: 2026,
+      filingType: "blue",
+      workStyle: "side_business",
+      salaryIncome: 5000000,
+      withholdingTax: 1000,
+    });
+    expect(result.refundAmount).toBe(0);
+    expect(result.incomeTaxBalance).toBeGreaterThanOrEqual(0);
   });
 });
 
