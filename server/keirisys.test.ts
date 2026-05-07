@@ -140,18 +140,32 @@ vi.mock("./db", () => {
     deleteClient: vi.fn(async (id: number, userId: number) => {
       mockClients = mockClients.filter(c => !(c.id === id && c.userId === userId));
     }),
-    getInvoicesByUser: vi.fn(async () => mockInvoices),
-    getInvoiceById: vi.fn(async (id: number) => {
-      const inv = mockInvoices.find(i => i.id === id);
-      return inv ? { ...inv, items: [], client: null } : null;
+    getInvoicesByUser: vi.fn(async (userId: number) => mockInvoices.filter(i => i.userId === userId)),
+    getInvoiceById: vi.fn(async (id: number, userId: number) => {
+      const inv = mockInvoices.find(i => i.id === id && i.userId === userId);
+      return inv ? { ...inv, items: inv.items ?? [], client: null } : null;
     }),
-    getNextInvoiceNumber: vi.fn(async () => "INV-0001"),
+    getNextInvoiceNumber: vi.fn(async (userId: number) => {
+      const userInvs = mockInvoices.filter(i => i.userId === userId && typeof i.invoiceNumber === "string" && i.invoiceNumber.startsWith("INV-"));
+      if (userInvs.length === 0) return "INV-0001";
+      const max = userInvs.reduce((m, i) => Math.max(m, Number(i.invoiceNumber.match(/(\d+)$/)?.[1] ?? 0)), 0);
+      return `INV-${String(max + 1).padStart(4, "0")}`;
+    }),
+    getNextQuoteNumber: vi.fn(async (userId: number) => {
+      const userQuotes = mockInvoices.filter(i => i.userId === userId && typeof i.invoiceNumber === "string" && i.invoiceNumber.startsWith("Q-"));
+      if (userQuotes.length === 0) return "Q-0001";
+      const max = userQuotes.reduce((m, i) => Math.max(m, Number(i.invoiceNumber.match(/(\d+)$/)?.[1] ?? 0)), 0);
+      return `Q-${String(max + 1).padStart(4, "0")}`;
+    }),
     createInvoice: vi.fn(async (data: any, items: any[]) => {
       const id = idCounter++;
       mockInvoices.push({ id, ...data, items });
       return { id };
     }),
-    updateInvoice: vi.fn(async () => {}),
+    updateInvoice: vi.fn(async (id: number, userId: number, data: any) => {
+      const idx = mockInvoices.findIndex(i => i.id === id && i.userId === userId);
+      if (idx >= 0) Object.assign(mockInvoices[idx], data);
+    }),
     deleteInvoice: vi.fn(async (id: number) => {
       mockInvoices = mockInvoices.filter(i => i.id !== id);
     }),
@@ -456,6 +470,75 @@ describe("Transactions (取引)", () => {
     });
     expect(result.refundAmount).toBe(0);
     expect(result.incomeTaxBalance).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("Quotes (見積書)", () => {
+  it("creates a quote and lists it via quotes.list", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const next = await caller.quotes.nextNumber();
+    expect(next).toMatch(/^Q-\d{4}$/);
+    const created = await caller.quotes.create({
+      clientId: null,
+      quoteNumber: next,
+      issueDate: Date.now(),
+      dueDate: Date.now() + 30 * 86400000,
+      subtotal: "10000",
+      taxRate: "10",
+      taxAmount: "1000",
+      totalAmount: "11000",
+      items: [{ description: "コンサル", quantity: "1", unitPrice: "10000", amount: "10000" }],
+    });
+    expect(created).toHaveProperty("id");
+    const list = await caller.quotes.list();
+    expect(list.some((q) => q.id === created.id)).toBe(true);
+  });
+
+  it("rejects non-Q prefixed quote numbers", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(
+      caller.quotes.create({
+        clientId: null,
+        quoteNumber: "INV-9999",
+        issueDate: Date.now(),
+        dueDate: Date.now() + 86400000,
+        subtotal: "1", taxRate: "10", taxAmount: "0", totalAmount: "1",
+        items: [{ description: "x", quantity: "1", unitPrice: "1", amount: "1" }],
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("convertToInvoice creates a new invoice and marks quote as accepted", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const next = await caller.quotes.nextNumber();
+    const created = await caller.quotes.create({
+      clientId: null,
+      quoteNumber: next,
+      issueDate: Date.now(),
+      dueDate: Date.now() + 86400000,
+      subtotal: "5000", taxRate: "10", taxAmount: "500", totalAmount: "5500",
+      items: [{ description: "作業A", quantity: "1", unitPrice: "5000", amount: "5000" }],
+    });
+    const result = await caller.quotes.convertToInvoice({ id: created.id });
+    expect(result.invoiceNumber).toMatch(/^INV-\d{4}$/);
+    expect(result.invoiceId).toBeGreaterThan(0);
+  });
+
+  it("nextNumber increments across multiple quotes", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    const first = await caller.quotes.nextNumber();
+    await caller.quotes.create({
+      clientId: null, quoteNumber: first,
+      issueDate: Date.now(), dueDate: Date.now() + 86400000,
+      subtotal: "1000", taxRate: "10", taxAmount: "100", totalAmount: "1100",
+      items: [{ description: "x", quantity: "1", unitPrice: "1000", amount: "1000" }],
+    });
+    const second = await caller.quotes.nextNumber();
+    expect(second).not.toBe(first);
   });
 });
 

@@ -661,6 +661,26 @@ export async function deleteInvoice(id: number, userId: number) {
   await db.delete(invoices).where(and(eq(invoices.id, id), eq(invoices.userId, userId)));
 }
 
+export async function getNextQuoteNumber(userId: number): Promise<string> {
+  if (isInMemoryMode()) {
+    const userQuotes = inMemoryInvoices.filter((i: any) => i.userId === userId && typeof i.invoiceNumber === "string" && i.invoiceNumber.startsWith("Q-"));
+    if (userQuotes.length === 0) return "Q-0001";
+    const last = userQuotes.sort((a: any, b: any) => b.id - a.id)[0].invoiceNumber;
+    const match = last.match(/(\d+)$/);
+    if (!match) return "Q-0001";
+    return `Q-${String(Number(match[1]) + 1).padStart(4, "0")}`;
+  }
+  const db = await getDb();
+  if (!db) return "Q-0001";
+  const result = await db.select({ invoiceNumber: invoices.invoiceNumber }).from(invoices).where(and(eq(invoices.userId, userId), sql`${invoices.invoiceNumber} LIKE 'Q-%'`)).orderBy(desc(invoices.id)).limit(1);
+  if (result.length === 0) return "Q-0001";
+  const last = result[0].invoiceNumber;
+  const match = last.match(/(\d+)$/);
+  if (!match) return "Q-0001";
+  const next = String(Number(match[1]) + 1).padStart(4, "0");
+  return `Q-${next}`;
+}
+
 export async function getNextInvoiceNumber(userId: number): Promise<string> {
   if (isInMemoryMode()) {
     const userInvoices = inMemoryInvoices.filter((i: any) => i.userId === userId);

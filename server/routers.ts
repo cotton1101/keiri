@@ -459,6 +459,116 @@ export const appRouter = router({
     }),
   }),
 
+  // ─── Quotes (見積書) ─── invoices テーブルを共有し、invoiceNumber が "Q-" で始まるレコードを見積書として扱う
+  quotes: router({
+    list: protectedProcedure.query(async ({ ctx }) => {
+      const all = await db.getInvoicesByUser(ctx.user.id);
+      return all.filter((inv) => typeof inv.invoiceNumber === "string" && inv.invoiceNumber.startsWith("Q-"));
+    }),
+    get: protectedProcedure.input(z.object({ id: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      const inv = await db.getInvoiceById(input.id, ctx.user.id);
+      if (!inv || !inv.invoiceNumber.startsWith("Q-")) return null;
+      return inv;
+    }),
+    nextNumber: protectedProcedure.query(async ({ ctx }) => {
+      return db.getNextQuoteNumber(ctx.user.id);
+    }),
+    create: protectedProcedure.input(z.object({
+      clientId: z.number().nullable().optional(),
+      quoteNumber: z.string().regex(/^Q-/, "見積書番号は 'Q-' で始めてください"),
+      issueDate: z.number(),
+      dueDate: z.number(),
+      subtotal: z.string(),
+      taxRate: z.string(),
+      taxAmount: z.string(),
+      totalAmount: z.string(),
+      notes: z.string().optional(),
+      status: z.enum(["draft", "sent", "paid", "overdue", "cancelled"]).optional(),
+      items: z.array(z.object({
+        description: z.string(),
+        quantity: z.string(),
+        unitPrice: z.string(),
+        amount: z.string(),
+      })),
+    })).mutation(async ({ ctx, input }) => {
+      const { items, quoteNumber, ...rest } = input;
+      return db.createInvoice(
+        { ...rest, userId: ctx.user.id, invoiceNumber: quoteNumber, clientId: rest.clientId ?? null, notes: rest.notes ?? null, status: rest.status ?? "draft" },
+        items,
+      );
+    }),
+    update: protectedProcedure.input(z.object({
+      id: z.number().int().positive(),
+      clientId: z.number().nullable().optional(),
+      quoteNumber: z.string().regex(/^Q-/).optional(),
+      issueDate: z.number().optional(),
+      dueDate: z.number().optional(),
+      subtotal: z.string().optional(),
+      taxRate: z.string().optional(),
+      taxAmount: z.string().optional(),
+      totalAmount: z.string().optional(),
+      notes: z.string().optional(),
+      status: z.enum(["draft", "sent", "paid", "overdue", "cancelled"]).optional(),
+      items: z.array(z.object({
+        description: z.string(),
+        quantity: z.string(),
+        unitPrice: z.string(),
+        amount: z.string(),
+      })).optional(),
+    })).mutation(async ({ ctx, input }) => {
+      const existing = await db.getInvoiceById(input.id, ctx.user.id);
+      if (!existing || !existing.invoiceNumber.startsWith("Q-")) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "見積書が見つかりません" });
+      }
+      const { id, items, quoteNumber, ...data } = input;
+      const patch: any = { ...data };
+      if (quoteNumber !== undefined) patch.invoiceNumber = quoteNumber;
+      await db.updateInvoice(id, ctx.user.id, patch, items);
+      return { success: true };
+    }),
+    delete: protectedProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      const existing = await db.getInvoiceById(input.id, ctx.user.id);
+      if (!existing || !existing.invoiceNumber.startsWith("Q-")) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "見積書が見つかりません" });
+      }
+      await db.deleteInvoice(input.id, ctx.user.id);
+      return { success: true };
+    }),
+    // 見積書から請求書を新規作成 (元の見積書はそのまま残す)
+    convertToInvoice: protectedProcedure.input(z.object({ id: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      const quote = await db.getInvoiceById(input.id, ctx.user.id);
+      if (!quote || !quote.invoiceNumber.startsWith("Q-")) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "見積書が見つかりません" });
+      }
+      const newNumber = await db.getNextInvoiceNumber(ctx.user.id);
+      const now = Date.now();
+      const result = await db.createInvoice(
+        {
+          userId: ctx.user.id,
+          clientId: quote.clientId ?? null,
+          invoiceNumber: newNumber,
+          issueDate: now,
+          dueDate: now + 30 * 86400000,
+          subtotal: quote.subtotal,
+          taxRate: quote.taxRate,
+          taxAmount: quote.taxAmount,
+          totalAmount: quote.totalAmount,
+          notes: quote.notes ?? null,
+          status: "draft",
+        },
+        (quote.items ?? []).map((it: any) => ({
+          description: it.description,
+          quantity: it.quantity,
+          unitPrice: it.unitPrice,
+          amount: it.amount,
+        })),
+      );
+      // 元の見積書を「承認済み」相当(paid)へ更新
+      await db.updateInvoice(input.id, ctx.user.id, { status: "paid" });
+      return { invoiceId: result.id, invoiceNumber: newNumber };
+    }),
+  }),
+
   // ─── Business Profile (事業者情報) ───
   businessProfile: router({
     get: protectedProcedure.query(async ({ ctx }) => {
