@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { Plus, ScrollText, Trash2, FileCheck2, Search, X } from "lucide-react";
+import { Plus, ScrollText, Trash2, FileCheck2, Search, X, Printer, Eye } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
 
@@ -140,7 +140,7 @@ export default function Quotes() {
           ) : (
             <div className="divide-y">
               {filteredQuotes.map((qt) => (
-                <div key={qt.id} className="flex items-center justify-between px-5 py-4 hover:bg-muted/20 transition-colors">
+                <div key={qt.id} className="flex items-center justify-between px-5 py-4 hover:bg-muted/20 transition-colors cursor-pointer" onClick={() => setLocation(`/quotes/${qt.id}`)}>
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="h-10 w-10 rounded-xl bg-primary/5 flex items-center justify-center shrink-0">
                       <ScrollText className="h-4 w-4 text-primary" />
@@ -153,15 +153,17 @@ export default function Quotes() {
                       <p className="text-xs text-muted-foreground mt-0.5">{formatDate(qt.issueDate)} 〜 {formatDate(qt.dueDate)}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex items-center gap-3 shrink-0" onClick={(e) => e.stopPropagation()}>
                     <span className="text-sm font-semibold tabular-nums">{formatCurrency(Number(qt.totalAmount))}</span>
                     <div className="flex items-center gap-1">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" title="表示・PDF出力" onClick={() => setLocation(`/quotes/${qt.id}`)}><Eye className="h-3.5 w-3.5" /></Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" title="PDFを出力" onClick={() => setLocation(`/quotes/${qt.id}?print=1`)}><Printer className="h-3.5 w-3.5" /></Button>
                       <Button
                         variant="outline" size="sm" className="h-7 gap-1 text-xs"
                         disabled={convertMut.isPending}
                         onClick={() => { if (confirm(`見積書「${qt.invoiceNumber}」を請求書化しますか？\n（見積書はそのまま残り、新しい請求書が作成されます）`)) convertMut.mutate({ id: qt.id }); }}
                       ><FileCheck2 className="h-3.5 w-3.5" />請求書化</Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => { if (confirm("削除しますか？")) deleteMut.mutate({ id: qt.id }); }}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" title="削除" onClick={() => { if (confirm("削除しますか？")) deleteMut.mutate({ id: qt.id }); }}><Trash2 className="h-3.5 w-3.5" /></Button>
                     </div>
                   </div>
                 </div>

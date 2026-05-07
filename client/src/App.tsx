@@ -18,6 +18,7 @@ const Reports = lazy(() => import("./pages/Reports"));
 const Invoices = lazy(() => import("./pages/Invoices"));
 const InvoiceDetail = lazy(() => import("./pages/InvoiceDetail"));
 const Quotes = lazy(() => import("./pages/Quotes"));
+const QuoteDetail = lazy(() => import("./pages/QuoteDetail"));
 const Plans = lazy(() => import("./pages/Plans"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
 const TaxFiling = lazy(() => import("./pages/TaxFiling"));
@@ -58,6 +59,7 @@ function AppRoutes() {
           <Route path="/invoices" component={Invoices} />
           <Route path="/invoices/:id" component={InvoiceDetail} />
           <Route path="/quotes" component={Quotes} />
+          <Route path="/quotes/:id" component={QuoteDetail} />
           <Route path="/import" component={ImportData} />
           <Route path="/plans" component={Plans} />
           <Route path="/settings" component={SettingsPage} />
