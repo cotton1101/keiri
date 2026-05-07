@@ -9,9 +9,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { ArrowLeft, Printer, Mail, Send, History, FileCheck2 } from "lucide-react";
+import { ArrowLeft, Printer, Mail, Send, History, FileCheck2, Pencil, Plus, X } from "lucide-react";
 import { useLocation, useParams } from "wouter";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { fromTimestamp, toTimestamp } from "@/lib/utils-format";
 
 const quoteStatusLabels: Record<string, string> = {
   draft: "下書き", sent: "送付済", paid: "承認済", overdue: "期限切れ", cancelled: "却下",
@@ -25,6 +26,10 @@ const quoteStatusColors: Record<string, string> = {
 };
 
 type EmailForm = { toEmail: string; toName: string; subject: string; body: string };
+type EditForm = {
+  clientId: number | null; quoteNumber: string; issueDate: string; dueDate: string; taxRate: string; notes: string;
+  items: { description: string; quantity: string; unitPrice: string; amount: string }[];
+};
 
 export default function QuoteDetail() {
   const params = useParams<{ id: string }>();
@@ -32,7 +37,13 @@ export default function QuoteDetail() {
   const quoteId = Number(params.id);
   const [emailOpen, setEmailOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [emailForm, setEmailForm] = useState<EmailForm>({ toEmail: "", toName: "", subject: "", body: "" });
+  const [editForm, setEditForm] = useState<EditForm>({
+    clientId: null, quoteNumber: "", issueDate: "", dueDate: "", taxRate: "10", notes: "",
+    items: [{ description: "", quantity: "1", unitPrice: "", amount: "0" }],
+  });
+  const { data: clientsList } = trpc.clients.list.useQuery();
 
   const utils = trpc.useUtils();
   const { data: quote, isLoading } = trpc.quotes.get.useQuery({ id: quoteId });
@@ -48,6 +59,10 @@ export default function QuoteDetail() {
   const { data: profile } = trpc.businessProfile.get.useQuery();
   const { data: emailLogs } = trpc.email.logs.useQuery();
   const updateMut = trpc.quotes.update.useMutation({ onSuccess: () => { utils.quotes.invalidate(); toast.success("ステータスを更新しました"); } });
+  const editMut = trpc.quotes.update.useMutation({
+    onSuccess: () => { utils.quotes.invalidate(); toast.success("見積書を更新しました"); setEditOpen(false); },
+    onError: (err) => toast.error(err.message),
+  });
   const convertMut = trpc.quotes.convertToInvoice.useMutation({
     onSuccess: (res) => {
       utils.quotes.invalidate(); utils.invoices.invalidate();
@@ -65,6 +80,53 @@ export default function QuoteDetail() {
     },
     onError: (err) => toast.error(err.message),
   });
+
+  const editSubtotal = useMemo(() => editForm.items.reduce((s, i) => s + Number(i.amount || 0), 0), [editForm.items]);
+  const editDiscountTotal = useMemo(() => editForm.items.filter((i) => Number(i.amount || 0) < 0).reduce((s, i) => s + Number(i.amount || 0), 0), [editForm.items]);
+  const editTaxAmount = useMemo(() => Math.round(editSubtotal * Number(editForm.taxRate || 0) / 100), [editSubtotal, editForm.taxRate]);
+
+  function openEdit() {
+    if (!quote) return;
+    setEditForm({
+      clientId: quote.clientId ?? null,
+      quoteNumber: quote.invoiceNumber,
+      issueDate: fromTimestamp(quote.issueDate),
+      dueDate: fromTimestamp(quote.dueDate),
+      taxRate: String(quote.taxRate),
+      notes: quote.notes ?? "",
+      items: (quote.items ?? []).length > 0
+        ? quote.items.map((it: any) => ({ description: it.description, quantity: String(it.quantity), unitPrice: String(it.unitPrice), amount: String(it.amount) }))
+        : [{ description: "", quantity: "1", unitPrice: "", amount: "0" }],
+    });
+    setEditOpen(true);
+  }
+  function editUpdateItem(index: number, field: keyof EditForm["items"][number], value: string) {
+    const newItems = [...editForm.items];
+    newItems[index] = { ...newItems[index], [field]: value };
+    if (field === "quantity" || field === "unitPrice") {
+      const qty = Number(newItems[index].quantity) || 0;
+      const price = Number(newItems[index].unitPrice) || 0;
+      newItems[index].amount = String(Math.round(qty * price));
+    }
+    setEditForm({ ...editForm, items: newItems });
+  }
+  function handleSaveEdit() {
+    if (!editForm.quoteNumber.startsWith("Q-")) { toast.error("見積書番号は 'Q-' で始めてください"); return; }
+    const validItems = editForm.items.filter((i) => i.description && Number(i.unitPrice) !== 0);
+    if (validItems.length === 0) { toast.error("明細を1つ以上入力してください"); return; }
+    const sub = validItems.reduce((s, i) => s + Number(i.amount), 0);
+    const tax = Math.round(sub * Number(editForm.taxRate) / 100);
+    editMut.mutate({
+      id: quoteId,
+      clientId: editForm.clientId,
+      quoteNumber: editForm.quoteNumber,
+      issueDate: toTimestamp(editForm.issueDate),
+      dueDate: toTimestamp(editForm.dueDate),
+      subtotal: String(sub), taxRate: editForm.taxRate, taxAmount: String(tax), totalAmount: String(sub + tax),
+      notes: editForm.notes || undefined,
+      items: validItems,
+    });
+  }
 
   function openEmailDialog() {
     const clientName = quote?.client?.name || "";
@@ -127,6 +189,9 @@ export default function QuoteDetail() {
               <SelectItem value="cancelled">却下</SelectItem>
             </SelectContent>
           </Select>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={openEdit}>
+            <Pencil className="h-3.5 w-3.5" />編集
+          </Button>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={openEmailDialog}>
             <Mail className="h-3.5 w-3.5" />メール送信
           </Button>
@@ -224,6 +289,73 @@ export default function QuoteDetail() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Edit Quote Dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="text-lg flex items-center gap-2"><Pencil className="h-4 w-4" />見積書を編集</DialogTitle></DialogHeader>
+          <div className="space-y-5 py-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs font-medium mb-1.5 block">見積書番号</Label>
+                <Input value={editForm.quoteNumber} onChange={(e) => setEditForm({ ...editForm, quoteNumber: e.target.value })} className="h-10" placeholder="Q-0001" />
+              </div>
+              <div>
+                <Label className="text-xs font-medium mb-1.5 block">取引先</Label>
+                <Select value={editForm.clientId ? String(editForm.clientId) : "none"} onValueChange={(v) => setEditForm({ ...editForm, clientId: v === "none" ? null : Number(v) })}>
+                  <SelectTrigger className="h-10"><SelectValue placeholder="取引先を選択" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">未選択</SelectItem>
+                    {clientsList?.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div><Label className="text-xs font-medium mb-1.5 block">発行日</Label><Input type="date" value={editForm.issueDate} onChange={(e) => setEditForm({ ...editForm, issueDate: e.target.value })} className="h-10" /></div>
+              <div><Label className="text-xs font-medium mb-1.5 block">有効期限</Label><Input type="date" value={editForm.dueDate} onChange={(e) => setEditForm({ ...editForm, dueDate: e.target.value })} className="h-10" /></div>
+              <div><Label className="text-xs font-medium mb-1.5 block">税率 (%)</Label><Input type="number" value={editForm.taxRate} onChange={(e) => setEditForm({ ...editForm, taxRate: e.target.value })} className="h-10" /></div>
+            </div>
+
+            <div>
+              <Label className="text-xs font-medium mb-2 block">明細</Label>
+              <div className="space-y-2">
+                {editForm.items.map((item, i) => (
+                  <div key={i} className={`grid grid-cols-12 gap-2 items-end ${Number(item.amount) < 0 ? "bg-emerald-50/40 rounded px-1" : ""}`}>
+                    <div className="col-span-5"><Input placeholder="品目・サービス名" value={item.description} onChange={(e) => editUpdateItem(i, "description", e.target.value)} className="h-9 text-sm" /></div>
+                    <div className="col-span-2"><Input type="number" placeholder="数量" value={item.quantity} onChange={(e) => editUpdateItem(i, "quantity", e.target.value)} className="h-9 text-sm" /></div>
+                    <div className="col-span-3"><Input type="number" placeholder="単価" value={item.unitPrice} onChange={(e) => editUpdateItem(i, "unitPrice", e.target.value)} className="h-9 text-sm" /></div>
+                    <div className={`col-span-1 text-right text-sm font-medium py-2 tabular-nums ${Number(item.amount) < 0 ? "text-emerald-600" : ""}`}>{formatCurrency(Number(item.amount))}</div>
+                    <div className="col-span-1">
+                      {editForm.items.length > 1 && <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setEditForm({ ...editForm, items: editForm.items.filter((_, j) => j !== i) })}><X className="h-3.5 w-3.5" /></Button>}
+                    </div>
+                  </div>
+                ))}
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setEditForm({ ...editForm, items: [...editForm.items, { description: "", quantity: "1", unitPrice: "", amount: "0" }] })} className="gap-1 text-xs"><Plus className="h-3 w-3" />明細を追加</Button>
+                  <Button variant="outline" size="sm" onClick={() => setEditForm({ ...editForm, items: [...editForm.items, { description: "値引き", quantity: "1", unitPrice: "-0", amount: "0" }] })} className="gap-1 text-xs">値引きを追加</Button>
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-2">💡 値引きはマイナス値の明細行として扱われます（例: 単価 -5000）。</p>
+            </div>
+
+            <div className="bg-muted/30 rounded-lg p-4 space-y-2">
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">小計</span><span className="font-medium tabular-nums">{formatCurrency(editSubtotal)}</span></div>
+              {editDiscountTotal < 0 && (
+                <div className="flex justify-between text-sm text-emerald-600"><span>うち値引き計</span><span className="font-medium tabular-nums">{formatCurrency(editDiscountTotal)}</span></div>
+              )}
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">消費税 ({editForm.taxRate}%)</span><span className="font-medium tabular-nums">{formatCurrency(editTaxAmount)}</span></div>
+              <div className="flex justify-between text-base font-bold border-t pt-2"><span>合計</span><span className="tabular-nums">{formatCurrency(editSubtotal + editTaxAmount)}</span></div>
+            </div>
+
+            <div><Label className="text-xs font-medium mb-1.5 block">備考</Label><Textarea placeholder="備考・特記事項" value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} rows={2} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>キャンセル</Button>
+            <Button onClick={handleSaveEdit} disabled={editMut.isPending} className="glow-primary">{editMut.isPending ? "保存中..." : "保存"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Email Send Dialog */}
       <Dialog open={emailOpen} onOpenChange={setEmailOpen}>

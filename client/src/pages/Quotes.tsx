@@ -73,6 +73,7 @@ export default function Quotes() {
   }, [quotesList, searchQuery]);
 
   const subtotal = useMemo(() => form.items.reduce((s, i) => s + Number(i.amount || 0), 0), [form.items]);
+  const discountTotal = useMemo(() => form.items.filter((i) => Number(i.amount || 0) < 0).reduce((s, i) => s + Number(i.amount || 0), 0), [form.items]);
   const taxAmount = useMemo(() => Math.round(subtotal * Number(form.taxRate || 0) / 100), [subtotal, form.taxRate]);
 
   function openCreate() {
@@ -214,12 +215,19 @@ export default function Quotes() {
                     </div>
                   </div>
                 ))}
-                <Button variant="outline" size="sm" onClick={() => setForm({ ...form, items: [...form.items, { description: "", quantity: "1", unitPrice: "", amount: "0" }] })} className="gap-1 text-xs"><Plus className="h-3 w-3" />明細を追加</Button>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setForm({ ...form, items: [...form.items, { description: "", quantity: "1", unitPrice: "", amount: "0" }] })} className="gap-1 text-xs"><Plus className="h-3 w-3" />明細を追加</Button>
+                  <Button variant="outline" size="sm" onClick={() => setForm({ ...form, items: [...form.items, { description: "値引き", quantity: "1", unitPrice: "-0", amount: "0" }] })} className="gap-1 text-xs">値引きを追加</Button>
+                </div>
               </div>
+              <p className="text-[11px] text-muted-foreground mt-2">💡 値引きを追加するとマイナス値の明細行が挿入されます。単価にマイナス金額を入力してください（例: -5000）。</p>
             </div>
 
             <div className="bg-muted/30 rounded-lg p-4 space-y-2">
               <div className="flex justify-between text-sm"><span className="text-muted-foreground">小計</span><span className="font-medium tabular-nums">{formatCurrency(subtotal)}</span></div>
+              {discountTotal < 0 && (
+                <div className="flex justify-between text-sm text-emerald-600"><span>うち値引き計</span><span className="font-medium tabular-nums">{formatCurrency(discountTotal)}</span></div>
+              )}
               <div className="flex justify-between text-sm"><span className="text-muted-foreground">消費税 ({form.taxRate}%)</span><span className="font-medium tabular-nums">{formatCurrency(taxAmount)}</span></div>
               <div className="flex justify-between text-base font-bold border-t pt-2"><span>合計</span><span className="tabular-nums">{formatCurrency(subtotal + taxAmount)}</span></div>
             </div>
