@@ -21,10 +21,10 @@ const TAX_CATEGORY_LABELS: Record<TaxCategory, string> = {
 type TxForm = { type: "income" | "expense"; accountId: number; amount: string; date: string; description: string; memo: string; taxCategory: TaxCategory; taxIncluded: number; };
 const emptyForm: TxForm = { type: "expense", accountId: 0, amount: "", date: fromTimestamp(Date.now()), description: "", memo: "", taxCategory: "taxable_10", taxIncluded: 1 };
 
-type BulkRow = { type: "income" | "expense"; accountId: number; amount: string; description: string; taxCategory: TaxCategory; taxIncluded: number; };
+type BulkRow = { type: "income" | "expense"; accountId: number; amount: string; date: string; description: string; taxCategory: TaxCategory; taxIncluded: number; withholdingTax: string; };
 const BULK_MAX_ROWS = 100;
-function newBulkRow(type: "income" | "expense", accountId: number): BulkRow {
-  return { type, accountId, amount: "", description: "", taxCategory: "taxable_10", taxIncluded: 1 };
+function newBulkRow(type: "income" | "expense", accountId: number, date: string): BulkRow {
+  return { type, accountId, amount: "", date, description: "", taxCategory: "taxable_10", taxIncluded: 1, withholdingTax: "" };
 }
 
 export default function Transactions() {
@@ -103,17 +103,18 @@ export default function Transactions() {
   function openBulk() {
     if (isAtLimit) { toast.error("無料プランの取引上限（15件）に達しています", { action: { label: "アップグレード", onClick: () => navigate("/plans") } }); return; }
     if (!defaultIncomeId || !defaultExpenseId) { toast.error("勘定科目の読み込み中です。少し待ってから再度お試しください"); return; }
-    setBulkDate(fromTimestamp(Date.now()));
+    const today = fromTimestamp(Date.now());
+    setBulkDate(today);
     setBulkRows([
-      newBulkRow("income", defaultIncomeId),
-      newBulkRow("expense", defaultExpenseId),
+      newBulkRow("income", defaultIncomeId, today),
+      newBulkRow("expense", defaultExpenseId, today),
     ]);
     setBulkOpen(true);
   }
   function bulkAddRow(type: "income" | "expense") {
     setBulkRows(rs => {
       if (rs.length >= BULK_MAX_ROWS) { toast.error(`一度に登録できるのは${BULK_MAX_ROWS}行までです`); return rs; }
-      return [...rs, newBulkRow(type, type === "income" ? defaultIncomeId : defaultExpenseId)];
+      return [...rs, newBulkRow(type, type === "income" ? defaultIncomeId : defaultExpenseId, bulkDate)];
     });
   }
   function bulkUpdateRow(i: number, patch: Partial<BulkRow>) {
@@ -122,38 +123,50 @@ export default function Transactions() {
   function bulkRemoveRow(i: number) {
     setBulkRows(rs => rs.filter((_, idx) => idx !== i));
   }
+  function bulkApplyDateToAll() {
+    if (!bulkDate) { toast.error("既定日付を入力してください"); return; }
+    setBulkRows(rs => rs.map(r => ({ ...r, date: bulkDate })));
+    toast.success("全行の日付を更新しました");
+  }
   function bulkSubmit() {
     if (bulkRows.length === 0) { toast.error("1行以上入力してください"); return; }
-    const dateMs = toTimestamp(bulkDate);
-    if (!Number.isFinite(dateMs)) { toast.error("日付が不正です"); return; }
     // 行ごとに検証
+    const items: { type: "income" | "expense"; accountId: number; amount: string; date: number; description?: string; memo?: string; taxCategory: TaxCategory; taxIncluded: number }[] = [];
     for (let i = 0; i < bulkRows.length; i++) {
       const r = bulkRows[i];
       const n = Number(r.amount);
       if (!r.amount || !Number.isFinite(n) || n <= 0) { toast.error(`${i + 1}行目: 金額を入力してください`); return; }
       if (!r.accountId) { toast.error(`${i + 1}行目: 勘定科目を選択してください`); return; }
+      const dateMs = toTimestamp(r.date);
+      if (!Number.isFinite(dateMs)) { toast.error(`${i + 1}行目: 日付が不正です`); return; }
+      const wt = Number(r.withholdingTax);
+      if (r.withholdingTax && (!Number.isFinite(wt) || wt < 0)) { toast.error(`${i + 1}行目: 源泉徴収税額が不正です`); return; }
+      const memo = wt > 0 ? `源泉徴収税額: ¥${wt.toLocaleString()}` : undefined;
+      items.push({
+        type: r.type, accountId: r.accountId, amount: r.amount, date: dateMs,
+        description: r.description || undefined,
+        memo,
+        taxCategory: r.taxCategory, taxIncluded: r.taxIncluded,
+      });
     }
     const remaining = limitInfo?.plan === "free" ? (limitInfo.transactionRemaining ?? 0) : Infinity;
     if (bulkRows.length > remaining) {
       toast.error(`無料プランの残り登録可能件数は${remaining}件です`, { action: { label: "アップグレード", onClick: () => navigate("/plans") } });
       return;
     }
-    bulkMut.mutate({
-      items: bulkRows.map(r => ({
-        type: r.type, accountId: r.accountId, amount: r.amount, date: dateMs,
-        description: r.description || undefined,
-        taxCategory: r.taxCategory, taxIncluded: r.taxIncluded,
-      })),
-    });
+    bulkMut.mutate({ items });
   }
   const bulkTotals = useMemo(() => {
-    let income = 0, expense = 0;
+    let income = 0, expense = 0, withholding = 0;
     for (const r of bulkRows) {
       const n = Number(r.amount);
-      if (!Number.isFinite(n)) continue;
-      if (r.type === "income") income += n; else expense += n;
+      if (Number.isFinite(n)) {
+        if (r.type === "income") income += n; else expense += n;
+      }
+      const w = Number(r.withholdingTax);
+      if (Number.isFinite(w) && w > 0) withholding += w;
     }
-    return { income, expense };
+    return { income, expense, withholding };
   }, [bulkRows]);
 
   return (
@@ -347,8 +360,11 @@ export default function Transactions() {
           <div className="space-y-4 py-2">
             <div className="flex flex-wrap items-end gap-3">
               <div>
-                <Label className="text-xs font-medium mb-1.5 block">日付（全行共通）</Label>
-                <Input type="date" value={bulkDate} onChange={e => setBulkDate(e.target.value)} className="h-10 w-[180px]" />
+                <Label className="text-xs font-medium mb-1.5 block">既定日付（新規行用）</Label>
+                <div className="flex items-center gap-2">
+                  <Input type="date" value={bulkDate} onChange={e => setBulkDate(e.target.value)} className="h-10 w-[180px]" />
+                  <Button variant="outline" size="sm" onClick={bulkApplyDateToAll}>全行に適用</Button>
+                </div>
               </div>
               <div className="flex gap-2 ml-auto">
                 <Button variant="outline" size="sm" className="gap-1" onClick={() => bulkAddRow("income")}><Plus className="h-3.5 w-3.5" />売上行を追加</Button>
@@ -356,26 +372,31 @@ export default function Transactions() {
               </div>
             </div>
 
-            <div className="border rounded-lg overflow-hidden">
-              <table className="w-full text-sm">
+            <div className="border rounded-lg overflow-x-auto">
+              <table className="w-full text-sm min-w-[1100px]">
                 <thead>
                   <tr className="bg-muted/40 border-b">
+                    <th className="text-left text-xs font-semibold p-2.5 w-[140px]">日付</th>
                     <th className="text-left text-xs font-semibold p-2.5 w-[80px]">種別</th>
-                    <th className="text-left text-xs font-semibold p-2.5 w-[200px]">勘定科目</th>
-                    <th className="text-right text-xs font-semibold p-2.5 w-[140px]">金額</th>
-                    <th className="text-left text-xs font-semibold p-2.5 w-[110px]">税区分</th>
-                    <th className="text-center text-xs font-semibold p-2.5 w-[90px]">税込/抜</th>
+                    <th className="text-left text-xs font-semibold p-2.5 w-[180px]">勘定科目</th>
+                    <th className="text-right text-xs font-semibold p-2.5 w-[120px]">金額</th>
+                    <th className="text-right text-xs font-semibold p-2.5 w-[120px]">源泉徴収税額</th>
+                    <th className="text-left text-xs font-semibold p-2.5 w-[100px]">税区分</th>
+                    <th className="text-center text-xs font-semibold p-2.5 w-[80px]">税込/抜</th>
                     <th className="text-left text-xs font-semibold p-2.5">摘要</th>
                     <th className="w-[40px]" />
                   </tr>
                 </thead>
                 <tbody>
                   {bulkRows.length === 0 ? (
-                    <tr><td colSpan={7} className="p-6 text-center text-muted-foreground text-sm">行がありません。上のボタンから追加してください。</td></tr>
+                    <tr><td colSpan={9} className="p-6 text-center text-muted-foreground text-sm">行がありません。上のボタンから追加してください。</td></tr>
                   ) : bulkRows.map((r, i) => {
                     const accts = r.type === "income" ? incomeAccounts : expenseAccounts;
                     return (
                       <tr key={i} className="border-b last:border-0">
+                        <td className="p-2">
+                          <Input type="date" value={r.date} onChange={e => bulkUpdateRow(i, { date: e.target.value })} className="h-9 text-xs" />
+                        </td>
                         <td className="p-2">
                           <Select value={r.type} onValueChange={(v: "income" | "expense") => bulkUpdateRow(i, { type: v, accountId: v === "income" ? defaultIncomeId : defaultExpenseId })}>
                             <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
@@ -393,6 +414,9 @@ export default function Transactions() {
                         </td>
                         <td className="p-2">
                           <Input type="number" inputMode="numeric" min="0" placeholder="0" value={r.amount} onChange={e => bulkUpdateRow(i, { amount: e.target.value })} className="h-9 text-sm text-right tabular-nums" />
+                        </td>
+                        <td className="p-2">
+                          <Input type="number" inputMode="numeric" min="0" placeholder="0" value={r.withholdingTax} onChange={e => bulkUpdateRow(i, { withholdingTax: e.target.value })} className="h-9 text-sm text-right tabular-nums" />
                         </td>
                         <td className="p-2">
                           <Select value={r.taxCategory} onValueChange={(v: TaxCategory) => bulkUpdateRow(i, { taxCategory: v })}>
@@ -423,11 +447,18 @@ export default function Transactions() {
 
             <div className="flex items-center justify-between text-sm bg-muted/30 rounded-lg p-3">
               <div className="text-muted-foreground">{bulkRows.length} 行 / 最大 {BULK_MAX_ROWS} 行</div>
-              <div className="flex gap-4 tabular-nums">
+              <div className="flex flex-wrap gap-4 tabular-nums">
                 <span>売上計 <strong className="text-emerald-600">¥{bulkTotals.income.toLocaleString()}</strong></span>
                 <span>仕入計 <strong className="text-rose-600">¥{bulkTotals.expense.toLocaleString()}</strong></span>
+                {bulkTotals.withholding > 0 && (
+                  <span>源泉徴収税額計 <strong className="text-blue-600">¥{bulkTotals.withholding.toLocaleString()}</strong></span>
+                )}
               </div>
             </div>
+
+            <p className="text-xs text-muted-foreground">
+              💡 源泉徴収税額を入力した行は、摘要メモに「源泉徴収税額: ¥XXX」として自動記録されます。年間合計は税金シミュレーションで確認できます。
+            </p>
 
             {limitInfo?.plan === "free" && (
               <p className="text-xs text-muted-foreground">
