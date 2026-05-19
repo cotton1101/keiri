@@ -1,4 +1,4 @@
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { COOKIE_NAME, SESSION_MAX_AGE_MS } from "@shared/const";
 import bcrypt from "bcryptjs";
 import { parse as parseCookieHeader } from "cookie";
 import type { Request, Response } from "express";
@@ -31,7 +31,7 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 export async function createSessionToken(user: { id: number; openId: string; email: string | null }): Promise<string> {
   const secretKey = getSessionSecret();
   const issuedAt = Date.now();
-  const expirationSeconds = Math.floor((issuedAt + ONE_YEAR_MS) / 1000);
+  const expirationSeconds = Math.floor((issuedAt + SESSION_MAX_AGE_MS) / 1000);
 
   return new SignJWT({
     userId: user.id,

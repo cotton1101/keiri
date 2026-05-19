@@ -39,10 +39,12 @@ export function getSessionCookieOptions(
   //       ? hostname
   //       : undefined;
 
+  const secure = isSecureRequest(req);
+  const basePath = (process.env.BASE_PATH || "/").replace(/\/$/, "") || "/";
   return {
     httpOnly: true,
-    path: "/",
-    sameSite: "none",
-    secure: isSecureRequest(req),
+    path: basePath,
+    sameSite: secure ? "none" : "lax",
+    secure,
   };
 }

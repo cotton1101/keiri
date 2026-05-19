@@ -47,7 +47,7 @@ export async function setupVite(app: Express, server: Server) {
   });
 }
 
-export function serveStatic(app: Express) {
+export function serveStatic(app: Express, basePath: string = "") {
   const distPath =
     process.env.NODE_ENV === "development"
       ? path.resolve(import.meta.dirname, "../..", "dist", "public")
@@ -58,10 +58,42 @@ export function serveStatic(app: Express) {
     );
   }
 
-  app.use(express.static(distPath));
+  app.use(basePath || "/", express.static(distPath));
 
   // fall through to index.html if the file doesn't exist
-  app.use("*", (_req, res) => {
-    res.sendFile(path.resolve(distPath, "index.html"));
+  // Inject page-specific meta tags for SEO crawlers
+  app.use(`${basePath}/*`, (req, res) => {
+    const indexPath = path.resolve(distPath, "index.html");
+    const html = fs.readFileSync(indexPath, "utf-8");
+
+    // Check if the request is for the landing page (root)
+    const reqPath = req.path.replace(basePath, "").replace(/^\/+/, "");
+    if (!reqPath || reqPath === "/" || reqPath === "index.html") {
+      // Landing page already has comprehensive meta tags from build
+      res.set("Content-Type", "text/html").send(html);
+      return;
+    }
+
+    // For login/register pages, inject specific meta tags
+    const siteUrl = process.env.SITE_URL || "https://sns-tool.online/keiri";
+    let pageHtml = html;
+    if (reqPath === "login") {
+      pageHtml = html
+        .replace(/<title>[^<]*<\/title>/, "<title>ログイン | カンタン経理</title>")
+        .replace(/<link rel="canonical"[^>]*>/, `<link rel="canonical" href="${siteUrl}/login" />`);
+    } else if (reqPath === "register") {
+      pageHtml = html
+        .replace(/<title>[^<]*<\/title>/, "<title>無料アカウント作成 | カンタン経理 - 個人事業主のためのクラウド経理ソフト</title>")
+        .replace(/<link rel="canonical"[^>]*>/, `<link rel="canonical" href="${siteUrl}/register" />`);
+    }
+
+    res.set("Content-Type", "text/html").send(pageHtml);
   });
+
+  // Redirect base path without trailing slash
+  if (basePath) {
+    app.get(basePath, (_req, res) => {
+      res.redirect(301, `${basePath}/`);
+    });
+  }
 }

@@ -39,6 +39,8 @@ export const businessProfiles = mysqlTable("business_profiles", {
   bankAccountName: varchar("bankAccountName", { length: 100 }).notNull().default(""),
   fiscalYearStart: int("fiscalYearStart").notNull().default(1),
   filingType: mysqlEnum("filingType", ["blue", "white"]).notNull().default("white"),
+  consumptionTaxMethod: mysqlEnum("consumptionTaxMethod", ["standard", "simplified", "exempt"]).notNull().default("exempt"),
+  simplifiedTaxIndustry: int("simplifiedTaxIndustry").notNull().default(5),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -96,6 +98,8 @@ export const transactions = mysqlTable("transactions", {
   memo: text("memo"),
   receiptUrl: text("receiptUrl"),
   importSource: varchar("importSource", { length: 50 }),
+  taxCategory: mysqlEnum("taxCategory", ["taxable_10", "taxable_8", "exempt", "non_taxable", "not_applicable"]).notNull().default("taxable_10"),
+  taxIncluded: int("taxIncluded").notNull().default(1),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -244,3 +248,24 @@ export const emailLogs = mysqlTable("email_logs", {
 
 export type EmailLog = typeof emailLogs.$inferSelect;
 export type InsertEmailLog = typeof emailLogs.$inferInsert;
+
+/**
+ * Receipts - レシート・領収書
+ */
+export const receipts = mysqlTable("receipts", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  fileName: varchar("fileName", { length: 255 }).notNull(),
+  fileType: varchar("fileType", { length: 100 }).notNull(),
+  fileData: text("fileData").notNull(), // base64
+  status: mysqlEnum("receiptStatus", ["pending", "processed", "error"]).notNull().default("pending"),
+  extractedData: json("extractedData"),
+  suggestedAccountId: int("suggestedAccountId"),
+  suggestedAccountName: varchar("suggestedAccountName", { length: 100 }),
+  suggestedType: mysqlEnum("suggestedType", ["income", "expense"]),
+  transactionId: int("transactionId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ReceiptRow = typeof receipts.$inferSelect;
+export type InsertReceipt = typeof receipts.$inferInsert;

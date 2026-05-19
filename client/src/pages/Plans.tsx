@@ -60,6 +60,21 @@ export default function Plans() {
     portalMut.mutate({ origin: window.location.origin });
   };
 
+  // Downgrade to free plan
+  const downgradeToFree = trpc.subscription.update.useMutation({
+    onSuccess: () => {
+      toast.success("フリープランに変更しました");
+      utils.subscription.invalidate();
+    },
+    onError: (err) => toast.error(err.message || "プラン変更に失敗しました"),
+  });
+
+  const handleDowngrade = () => {
+    if (confirm("フリープランに変更しますか？プレミアム機能が使えなくなります。")) {
+      downgradeToFree.mutate({ plan: "free" });
+    }
+  };
+
   const plans = [
     {
       id: "free" as const, name: "フリー", price: "0", period: "永久無料",
@@ -78,7 +93,7 @@ export default function Plans() {
       ],
     },
     {
-      id: "premium" as const, name: "プレミアム", price: "1,980", period: "/月（税込）",
+      id: "premium" as const, name: "プレミアム", price: "1,280", period: "/月（税込）",
       desc: "本格的な経理管理を求める方に", icon: Zap, color: "violet",
       features: [
         { text: "取引登録 無制限", included: true },
@@ -120,7 +135,7 @@ export default function Plans() {
       <div className="text-center max-w-xl mx-auto">
         <Badge variant="outline" className="mb-4 text-xs px-3 py-1">シンプルな料金体系</Badge>
         <h1 className="text-3xl font-bold tracking-tight">あなたに合ったプランを</h1>
-        <p className="text-muted-foreground mt-2">業界最安クラスの月額1,980円で、確定申告まで完結。</p>
+        <p className="text-muted-foreground mt-2">業界最安クラスの月額1,280円で、確定申告まで完結。</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
@@ -185,8 +200,19 @@ export default function Plans() {
                     </Button>
                   )
                 ) : (
-                  <Button className="w-full h-11 font-semibold" variant="outline" disabled={isCurrent}>
-                    {isCurrent ? <><Check className="h-4 w-4 mr-2" />現在のプラン</> : "フリープランに変更"}
+                  <Button
+                    className="w-full h-11 font-semibold"
+                    variant="outline"
+                    disabled={isCurrent || downgradeToFree.isPending}
+                    onClick={!isCurrent ? handleDowngrade : undefined}
+                  >
+                    {isCurrent ? (
+                      <><Check className="h-4 w-4 mr-2" />現在のプラン</>
+                    ) : downgradeToFree.isPending ? (
+                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" />変更中...</>
+                    ) : (
+                      "フリープランに変更"
+                    )}
                   </Button>
                 )}
 

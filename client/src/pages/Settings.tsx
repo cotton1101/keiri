@@ -16,6 +16,7 @@ type ProfileForm = {
   phone: string; email: string; taxId: string; bankName: string; bankBranch: string;
   bankAccountType: string; bankAccountNumber: string; bankAccountName: string;
   fiscalYearStart: number; filingType: "blue" | "white";
+  consumptionTaxMethod: "standard" | "simplified" | "exempt"; simplifiedTaxIndustry: number;
 };
 
 type ClientForm = { name: string; contactPerson: string; email: string; phone: string; postalCode: string; address: string; memo: string; };
@@ -24,6 +25,7 @@ const emptyProfile: ProfileForm = {
   businessName: "", representativeName: "", postalCode: "", address: "",
   phone: "", email: "", taxId: "", bankName: "", bankBranch: "",
   bankAccountType: "普通", bankAccountNumber: "", bankAccountName: "", fiscalYearStart: 1, filingType: "blue",
+  consumptionTaxMethod: "exempt", simplifiedTaxIndustry: 5,
 };
 const emptyClient: ClientForm = { name: "", contactPerson: "", email: "", phone: "", postalCode: "", address: "", memo: "" };
 
@@ -52,6 +54,8 @@ export default function SettingsPage() {
         bankAccountType: profile.bankAccountType || "普通", bankAccountNumber: profile.bankAccountNumber || "",
         bankAccountName: profile.bankAccountName || "", fiscalYearStart: profile.fiscalYearStart || 1,
         filingType: (profile.filingType as "blue" | "white") || "blue",
+        consumptionTaxMethod: (profile.consumptionTaxMethod as "standard" | "simplified" | "exempt") || "exempt",
+        simplifiedTaxIndustry: profile.simplifiedTaxIndustry || 5,
       });
     }
   }, [profile]);
@@ -144,6 +148,44 @@ export default function SettingsPage() {
                       <SelectContent><SelectItem value="blue">青色申告</SelectItem><SelectItem value="white">白色申告</SelectItem></SelectContent>
                     </Select>
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm">
+              <CardHeader className="pb-2"><CardTitle className="text-base font-semibold">消費税設定</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div><Label className="text-xs font-medium mb-1.5 block">消費税の課税方式</Label>
+                    <Select value={pf.consumptionTaxMethod} onValueChange={v => setPf("consumptionTaxMethod", v)}>
+                      <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="exempt">免税事業者</SelectItem>
+                        <SelectItem value="standard">本則課税</SelectItem>
+                        <SelectItem value="simplified">簡易課税</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      {pf.consumptionTaxMethod === "exempt" ? "課税売上高1,000万円以下の場合は免税事業者となります" :
+                       pf.consumptionTaxMethod === "standard" ? "実際の仕入税額を控除する方式です" :
+                       "みなし仕入率を使って簡易的に計算する方式です（課税売上高5,000万円以下）"}
+                    </p>
+                  </div>
+                  {pf.consumptionTaxMethod === "simplified" && (
+                    <div><Label className="text-xs font-medium mb-1.5 block">事業区分（簡易課税）</Label>
+                      <Select value={String(pf.simplifiedTaxIndustry)} onValueChange={v => setPf("simplifiedTaxIndustry", Number(v))}>
+                        <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="1">第1種（卸売業）90%</SelectItem>
+                          <SelectItem value="2">第2種（小売業）80%</SelectItem>
+                          <SelectItem value="3">第3種（製造業等）70%</SelectItem>
+                          <SelectItem value="4">第4種（その他）60%</SelectItem>
+                          <SelectItem value="5">第5種（サービス業等）50%</SelectItem>
+                          <SelectItem value="6">第6種（不動産業）40%</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

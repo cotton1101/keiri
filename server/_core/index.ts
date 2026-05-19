@@ -8,6 +8,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { stripeRouter } from "../stripe";
+import { seedInMemoryAdmin } from "../db";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -31,8 +32,49 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 async function startServer() {
   const app = express();
   const server = createServer(app);
+
+  // Base path for subdirectory deployment (e.g. "/keiri")
+  const basePath = (process.env.BASE_PATH || "/").replace(/\/$/, "") || "";
+
+  // ─── Security Headers ───
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("X-XSS-Protection", "1; mode=block");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy", "camera=(self), microphone=(), geolocation=()");
+    if (process.env.NODE_ENV === "production") {
+      res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
+    next();
+  });
+
+  // ─── SEO: robots.txt & sitemap.xml ───
+  const siteUrl = process.env.SITE_URL || "https://sns-tool.online/keiri";
+  app.get(`${basePath}/robots.txt`, (_req, res) => {
+    res.type("text/plain").send(
+      `User-agent: *\nAllow: /\nDisallow: /dashboard\nDisallow: /settings\nDisallow: /admin\nDisallow: /api/\n\nSitemap: ${siteUrl}/sitemap.xml\n`
+    );
+  });
+  app.get(`${basePath}/sitemap.xml`, (_req, res) => {
+    const urls = [
+      { loc: `${siteUrl}/`, priority: "1.0", changefreq: "weekly" },
+      { loc: `${siteUrl}/login`, priority: "0.6", changefreq: "monthly" },
+      { loc: `${siteUrl}/register`, priority: "0.7", changefreq: "monthly" },
+    ];
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${urls.map(u => `  <url>
+    <loc>${u.loc}</loc>
+    <changefreq>${u.changefreq}</changefreq>
+    <priority>${u.priority}</priority>
+  </url>`).join("\n")}
+</urlset>`;
+    res.type("application/xml").send(xml);
+  });
+
   // Stripe webhook must be registered BEFORE express.json() for raw body access
-  app.use(stripeRouter);
+  app.use(basePath || "/", stripeRouter);
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -40,7 +82,7 @@ async function startServer() {
   registerOAuthRoutes(app);
   // tRPC API
   app.use(
-    "/api/trpc",
+    `${basePath}/api/trpc`,
     createExpressMiddleware({
       router: appRouter,
       createContext,
@@ -50,7 +92,7 @@ async function startServer() {
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
   } else {
-    serveStatic(app);
+    serveStatic(app, basePath);
   }
 
   const preferredPort = parseInt(process.env.PORT || "3000");
@@ -59,6 +101,9 @@ async function startServer() {
   if (port !== preferredPort) {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
+
+  // Seed in-memory admin user if no DATABASE_URL
+  await seedInMemoryAdmin();
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);

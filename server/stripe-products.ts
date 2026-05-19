@@ -17,7 +17,7 @@ export const PLANS = {
   premium: {
     name: "プレミアムプラン",
     description: "本格的な経理・確定申告をサポート",
-    price: 1980,
+    price: 1280,
     priceId: process.env.STRIPE_PREMIUM_PRICE_ID || "", // Set after creating in Stripe
     features: [
       "取引入力（無制限）",
@@ -34,6 +34,6 @@ export const PLANS = {
 
 export const STRIPE_CONFIG = {
   currency: "jpy",
-  premiumPriceAmount: 1980,
+  premiumPriceAmount: 1280,
   trialDays: 0,
 } as const;

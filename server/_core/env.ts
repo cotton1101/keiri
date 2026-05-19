@@ -7,4 +7,10 @@ export const ENV = {
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",
+  // Admin seed credentials (in-memory dev mode only)
+  adminEmail: process.env.ADMIN_EMAIL ?? "admin@example.com",
+  adminPassword: process.env.ADMIN_PASSWORD ?? "",
+  adminName: process.env.ADMIN_NAME ?? "管理者",
+  // Allowed origins for Stripe redirects
+  allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "").split(",").filter(Boolean),
 };

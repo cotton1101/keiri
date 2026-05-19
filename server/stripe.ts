@@ -2,9 +2,12 @@ import Stripe from "stripe";
 import { Router, raw } from "express";
 import * as db from "./db";
 import { STRIPE_CONFIG } from "./stripe-products";
+import { sendAdminPlanUpgradeNotification, sendAdminCancellationNotification } from "./mail";
 
-// Initialize Stripe with secret key
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "");
+// Initialize Stripe with secret key (lazy - only when key is available)
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? new Stripe(process.env.STRIPE_SECRET_KEY)
+  : (null as unknown as Stripe);
 
 export const stripeRouter = Router();
 
@@ -22,11 +25,12 @@ export async function createCheckoutSession(params: {
   // First, ensure we have a Stripe Price for our premium plan
   const priceId = await getOrCreatePremiumPrice();
 
+  const basePath = (process.env.BASE_PATH || "/").replace(/\/$/, "") || "";
   const sessionConfig: Stripe.Checkout.SessionCreateParams = {
     mode: "subscription",
     line_items: [{ price: priceId, quantity: 1 }],
-    success_url: `${params.origin}/plans?session_id={CHECKOUT_SESSION_ID}&status=success`,
-    cancel_url: `${params.origin}/plans?status=cancelled`,
+    success_url: `${params.origin}${basePath}/plans?session_id={CHECKOUT_SESSION_ID}&status=success`,
+    cancel_url: `${params.origin}${basePath}/plans?status=cancelled`,
     client_reference_id: params.userId.toString(),
     metadata: {
       user_id: params.userId.toString(),
@@ -37,15 +41,21 @@ export async function createCheckoutSession(params: {
     locale: "ja",
   };
 
-  // Reuse existing Stripe customer if available
+  // Reuse existing Stripe customer or create one
+  // (Accounts V2 requires an existing customer for Checkout in test mode)
   if (params.existingStripeCustomerId) {
     sessionConfig.customer = params.existingStripeCustomerId;
   } else {
-    sessionConfig.customer_email = params.userEmail;
+    const customer = await stripe.customers.create({
+      email: params.userEmail,
+      name: params.userName,
+      metadata: { user_id: params.userId.toString() },
+    });
+    sessionConfig.customer = customer.id;
   }
 
   const session = await stripe.checkout.sessions.create(sessionConfig);
-  return { url: session.url, sessionId: session.id };
+  return { url: session.url, sessionId: session.id, customerId: sessionConfig.customer as string };
 }
 
 /**
@@ -57,7 +67,7 @@ export async function createPortalSession(params: {
 }) {
   const session = await stripe.billingPortal.sessions.create({
     customer: params.stripeCustomerId,
-    return_url: `${params.origin}/plans`,
+    return_url: `${params.origin}${(process.env.BASE_PATH || "/").replace(/\/$/, "") || ""}/plans`,
   });
   return { url: session.url };
 }
@@ -169,6 +179,10 @@ stripeRouter.post(
               stripeSubscriptionId: subscriptionId,
               stripeStatus: "active",
             });
+            // Notify admin of plan upgrade (non-blocking)
+            const customerEmail = session.metadata?.customer_email || session.customer_details?.email || "";
+            const customerName = session.metadata?.customer_name || "";
+            sendAdminPlanUpgradeNotification(customerEmail, customerName, "premium");
             console.log(`[Stripe Webhook] User ${userId} upgraded to premium`);
           }
           break;
@@ -198,10 +212,12 @@ stripeRouter.post(
             stripeStatus: "canceled",
             endDate: Date.now(),
           });
+          sendAdminCancellationNotification(stripeSubId);
           console.log(`[Stripe Webhook] Subscription ${stripeSubId} cancelled`);
           break;
         }
 
+        case "invoice.paid":
         case "invoice.payment_succeeded": {
           const invoice = event.data.object as Stripe.Invoice;
           const customerId = invoice.customer as string;

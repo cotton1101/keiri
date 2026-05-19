@@ -165,7 +165,7 @@ export default function InvoiceDetail() {
                 <th className="text-right py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider w-28">金額</th>
               </tr></thead>
               <tbody>
-                {invoice.items?.map((item, i) => (
+                {invoice.items?.map((item: { description: string; quantity: number; unitPrice: string | number; amount: string | number }, i: number) => (
                   <tr key={i} className="border-b border-foreground/5">
                     <td className="py-3 text-sm">{item.description}</td>
                     <td className="py-3 text-sm text-right tabular-nums">{item.quantity}</td>
