@@ -10,6 +10,12 @@ import { createCheckoutSession, createPortalSession, getCheckoutSession } from "
 import { registerUser, loginUser } from "./auth";
 import { ENV } from "./_core/env";
 import { sendWelcomeEmail, sendAdminNewUserNotification, sendInvoiceEmail } from "./mail";
+import { isStorageConfigured, storagePutObject, storageGetSignedUrl, storageDeleteObject } from "./storage";
+import { nanoid } from "nanoid";
+
+const RECEIPT_EXT_BY_TYPE: Record<string, string> = {
+  "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic", "application/pdf": "pdf",
+};
 
 // ─── Security: 値のバリデーション境界値 ───
 const MAX_AMOUNT = 999_999_999_999; // decimal(12,0) 上限
@@ -867,7 +873,12 @@ export const appRouter = router({
   // ─── Receipts (レシート・領収書) ───
   receipts: router({
     list: protectedProcedure.query(async ({ ctx }) => {
-      return db.getReceiptsByUser(ctx.user.id);
+      const rows = await db.getReceiptsByUser(ctx.user.id);
+      // S3保存分は署名付きURLを付与（base64分は fileData をそのまま使う）
+      return Promise.all(rows.map(async (r) => ({
+        ...r,
+        fileUrl: r.fileKey ? await storageGetSignedUrl(r.fileKey) : null,
+      })));
     }),
     upload: protectedProcedure.input(z.object({
       fileName: z.string().max(255),
@@ -895,11 +906,24 @@ export const appRouter = router({
       const userAccounts = await db.getAccountsByUser(ctx.user.id);
       const categorization = db.autoCategorizeReceipt(rawText, userAccounts);
 
+      // ハイブリッド保存: S3設定済みなら S3 へ、未設定なら base64 を DB へ
+      let fileData: string | null = input.fileData;
+      let fileKey: string | null = null;
+      if (isStorageConfigured()) {
+        const buf = Buffer.from(input.fileData, "base64");
+        const ext = RECEIPT_EXT_BY_TYPE[input.fileType] ?? "bin";
+        const key = `receipts/${ctx.user.id}/${Date.now()}-${nanoid(8)}.${ext}`;
+        await storagePutObject(key, buf, input.fileType);
+        fileKey = key;
+        fileData = null;
+      }
+
       const receipt = await db.createReceipt({
         userId: ctx.user.id,
         fileName: input.fileName,
         fileType: input.fileType,
-        fileData: input.fileData,
+        fileData,
+        fileKey,
         status: rawText ? "processed" : "pending",
         extractedData: rawText ? { vendor: vendor ?? undefined, amount: amount ?? undefined, date: date ?? undefined, items, rawText } : null,
         suggestedAccountId: categorization.accountId,
@@ -908,7 +932,7 @@ export const appRouter = router({
         transactionId: null,
       });
 
-      return receipt;
+      return { ...receipt, fileUrl: fileKey ? await storageGetSignedUrl(fileKey) : null };
     }),
     analyze: protectedProcedure.input(z.object({
       id: z.number(),
@@ -958,7 +982,10 @@ export const appRouter = router({
       return txn;
     }),
     delete: protectedProcedure.input(z.object({ id: z.number() })).mutation(async ({ ctx, input }) => {
-      await db.deleteReceipt(input.id, ctx.user.id);
+      const { fileKey } = await db.deleteReceipt(input.id, ctx.user.id);
+      if (fileKey && isStorageConfigured()) {
+        try { await storageDeleteObject(fileKey); } catch { /* S3削除はベストエフォート */ }
+      }
       return { success: true };
     }),
   }),

@@ -13,7 +13,9 @@ type ReceiptItem = {
   id: number;
   fileName: string;
   fileType: string;
-  fileData: string;
+  fileData: string | null;
+  fileKey?: string | null;
+  fileUrl?: string | null;
   status: "pending" | "processed" | "error";
   extractedData: {
     vendor?: string;
@@ -268,7 +270,7 @@ export default function Receipts() {
                   <div className="h-14 w-14 rounded-lg bg-muted/50 flex items-center justify-center shrink-0 overflow-hidden">
                     {receipt.fileType.startsWith("image/") ? (
                       <img
-                        src={`data:${receipt.fileType};base64,${receipt.fileData}`}
+                        src={receipt.fileUrl || (receipt.fileData ? `data:${receipt.fileType};base64,${receipt.fileData}` : "")}
                         alt={receipt.fileName}
                         className="h-full w-full object-cover rounded-lg"
                       />
@@ -326,7 +328,7 @@ export default function Receipts() {
               <div className="rounded-xl border overflow-hidden bg-muted/30 max-h-[300px] flex items-center justify-center">
                 {selectedReceipt.fileType.startsWith("image/") ? (
                   <img
-                    src={`data:${selectedReceipt.fileType};base64,${selectedReceipt.fileData}`}
+                    src={selectedReceipt.fileUrl || (selectedReceipt.fileData ? `data:${selectedReceipt.fileType};base64,${selectedReceipt.fileData}` : "")}
                     alt={selectedReceipt.fileName}
                     className="max-h-[300px] object-contain"
                   />

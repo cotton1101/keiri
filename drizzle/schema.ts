@@ -257,7 +257,9 @@ export const receipts = mysqlTable("receipts", {
   userId: int("userId").notNull(),
   fileName: varchar("fileName", { length: 255 }).notNull(),
   fileType: varchar("fileType", { length: 100 }).notNull(),
-  fileData: text("fileData").notNull(), // base64
+  // ハイブリッド保存: S3未設定なら fileData(base64)、S3設定済みなら fileKey にS3キーを保存し fileData は NULL
+  fileData: text("fileData"), // base64 (S3利用時は null)
+  fileKey: varchar("fileKey", { length: 512 }), // S3 object key (base64利用時は null)
   status: mysqlEnum("receiptStatus", ["pending", "processed", "error"]).notNull().default("pending"),
   extractedData: json("extractedData"),
   suggestedAccountId: int("suggestedAccountId"),

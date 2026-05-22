@@ -1298,7 +1298,8 @@ export type Receipt = {
   userId: number;
   fileName: string;
   fileType: string; // "image/jpeg", "image/png", "application/pdf"
-  fileData: string; // base64
+  fileData: string | null; // base64 (S3利用時は null)
+  fileKey: string | null; // S3 object key (base64利用時は null)
   status: "pending" | "processed" | "error";
   extractedData: {
     vendor?: string;
@@ -1329,6 +1330,7 @@ export async function getReceiptsByUser(userId: number): Promise<Receipt[]> {
     fileName: r.fileName,
     fileType: r.fileType,
     fileData: r.fileData,
+    fileKey: r.fileKey,
     status: r.status as "pending" | "processed" | "error",
     extractedData: r.extractedData as Receipt["extractedData"],
     suggestedAccountId: r.suggestedAccountId,
@@ -1352,6 +1354,7 @@ export async function createReceipt(data: Omit<Receipt, "id" | "createdAt">): Pr
     fileName: data.fileName,
     fileType: data.fileType,
     fileData: data.fileData,
+    fileKey: data.fileKey,
     status: data.status,
     extractedData: data.extractedData,
     suggestedAccountId: data.suggestedAccountId,
@@ -1381,15 +1384,19 @@ export async function updateReceipt(id: number, userId: number, data: Partial<Re
   await db.update(receipts).set(updateData).where(and(eq(receipts.id, id), eq(receipts.userId, userId)));
 }
 
-export async function deleteReceipt(id: number, userId: number): Promise<void> {
+export async function deleteReceipt(id: number, userId: number): Promise<{ fileKey: string | null }> {
   if (isInMemoryMode()) {
     const idx = inMemoryReceipts.findIndex((r: any) => r.id === id && r.userId === userId);
+    const fileKey = idx >= 0 ? (inMemoryReceipts[idx].fileKey ?? null) : null;
     if (idx >= 0) inMemoryReceipts.splice(idx, 1);
-    return;
+    return { fileKey };
   }
   const db = await getDb();
-  if (!db) return;
+  if (!db) return { fileKey: null };
+  const existing = await db.select({ fileKey: receipts.fileKey }).from(receipts).where(and(eq(receipts.id, id), eq(receipts.userId, userId))).limit(1);
+  const fileKey = existing[0]?.fileKey ?? null;
   await db.delete(receipts).where(and(eq(receipts.id, id), eq(receipts.userId, userId)));
+  return { fileKey };
 }
 
 // ─── Receipt Auto-Categorization ───
