@@ -150,9 +150,18 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
-
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const isProd = mode === "production";
+  // Manus ランタイムはプレビュー環境専用で、React を inline script として注入する。
+  // 本番(自前VPS)では不要かつ CSP(script-src 'self') と競合するため除外する。
+  const plugins = [
+    react(),
+    tailwindcss(),
+    jsxLocPlugin(),
+    ...(isProd ? [] : [vitePluginManusRuntime()]),
+    vitePluginManusDebugCollector(),
+  ];
+  return {
   base: process.env.BASE_PATH || "/",
   plugins,
   resolve: {
@@ -185,4 +194,5 @@ export default defineConfig({
       deny: ["**/.*"],
     },
   },
+  };
 });
