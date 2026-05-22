@@ -31,6 +31,9 @@ const inMemoryUsers: Map<string, User & { passwordHash?: string | null }> = new 
 let inMemoryIdCounter = 1;
 
 function isInMemoryMode() {
+  if (process.env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
+    throw new Error("[FATAL] DATABASE_URL is required in production. Refusing to start in in-memory mode.");
+  }
   return !process.env.DATABASE_URL;
 }
 
@@ -683,7 +686,7 @@ export async function getNextQuoteNumber(userId: number): Promise<string> {
 
 export async function getNextInvoiceNumber(userId: number): Promise<string> {
   if (isInMemoryMode()) {
-    const userInvoices = inMemoryInvoices.filter((i: any) => i.userId === userId);
+    const userInvoices = inMemoryInvoices.filter((i: any) => i.userId === userId && typeof i.invoiceNumber === "string" && i.invoiceNumber.startsWith("INV-"));
     if (userInvoices.length === 0) return "INV-0001";
     const last = userInvoices.sort((a: any, b: any) => b.id - a.id)[0].invoiceNumber;
     const match = last.match(/(\d+)$/);
@@ -692,7 +695,7 @@ export async function getNextInvoiceNumber(userId: number): Promise<string> {
   }
   const db = await getDb();
   if (!db) return "INV-0001";
-  const result = await db.select({ invoiceNumber: invoices.invoiceNumber }).from(invoices).where(eq(invoices.userId, userId)).orderBy(desc(invoices.id)).limit(1);
+  const result = await db.select({ invoiceNumber: invoices.invoiceNumber }).from(invoices).where(and(eq(invoices.userId, userId), sql`${invoices.invoiceNumber} LIKE 'INV-%'`)).orderBy(desc(invoices.id)).limit(1);
   if (result.length === 0) return "INV-0001";
   const last = result[0].invoiceNumber;
   const match = last.match(/(\d+)$/);

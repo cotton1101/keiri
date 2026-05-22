@@ -68,6 +68,13 @@ pnpm dev
 
 ブラウザで `http://localhost:5173` を開いて確認。
 
+## 🔐 セキュリティ運用上の注意
+
+- **シークレットはリポジトリに置かない。** `.env` / `.env.production` は `.gitignore` 済みです。`.env.example` のキー名のみを参考に、実値はローカルと本番サーバ上にだけ置いてください。
+- **本番 Stripe Live Key は本番サーバの `.env` にのみ配置。** リポジトリ内 `.env.production` には書かないでください（`STRIPE_SECRET_KEY=` を空のままにする）。
+- **Stripe Secret Key が漏洩した・履歴に残った場合は即ローテーション:** Stripe ダッシュボード → Developers → API keys → 該当キーの「Roll key」で旧キーを無効化し新キーを発行。新キーを本番サーバの `.env` に設定して `pm2 reload` してください。
+- **管理者初期パスワードは初回 seed 専用。** `ADMIN_PASSWORD` は初回起動時のみ使われます。本番では `.env.production` に書かず、本番サーバ上の `.env` に一時的に設定して初回起動 → ログイン後に削除する運用を推奨します（空なら admin seed はスキップされます）。
+
 ## 🧪 テスト
 
 ```bash

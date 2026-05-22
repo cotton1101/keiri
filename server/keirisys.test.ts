@@ -540,6 +540,21 @@ describe("Quotes (見積書)", () => {
     const second = await caller.quotes.nextNumber();
     expect(second).not.toBe(first);
   });
+
+  it("invoices.nextNumber ignores quote (Q-) numbers", async () => {
+    const ctx = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    // 見積書を複数作成しても請求書番号は INV- 系列で独立して採番される
+    const q = await caller.quotes.nextNumber();
+    await caller.quotes.create({
+      clientId: null, quoteNumber: q,
+      issueDate: Date.now(), dueDate: Date.now() + 86400000,
+      subtotal: "1000", taxRate: "10", taxAmount: "100", totalAmount: "1100",
+      items: [{ description: "x", quantity: "1", unitPrice: "1000", amount: "1000" }],
+    });
+    const invNum = await caller.invoices.nextNumber();
+    expect(invNum).toMatch(/^INV-\d{4}$/);
+  });
 });
 
 describe("Dashboard", () => {
