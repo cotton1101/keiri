@@ -121,7 +121,7 @@ export const appRouter = router({
       return safeUser;
     }),
     register: publicProcedure.input(z.object({
-      email: z.string().email("有効なメールアドレスを入力してください").max(255),
+      email: z.string().email("有効なメールアドレスを入力してください").max(255).transform((v) => v.trim().toLowerCase()),
       password: z.string().min(8, "パスワードは8文字以上で入力してください").max(128),
       name: z.string().min(1, "名前を入力してください").max(100),
     })).mutation(async ({ ctx, input }) => {
@@ -142,7 +142,7 @@ export const appRouter = router({
       }
     }),
     login: publicProcedure.input(z.object({
-      email: z.string().email("有効なメールアドレスを入力してください"),
+      email: z.string().email("有効なメールアドレスを入力してください").max(255).transform((v) => v.trim().toLowerCase()),
       password: z.string().min(1, "パスワードを入力してください"),
     })).mutation(async ({ ctx, input }) => {
       const rateLimitKey = input.email.toLowerCase();
@@ -784,8 +784,7 @@ export const appRouter = router({
       // 副業会社員は社会保険は会社負担なので国保不要
       const healthInsurance = isSideBusiness ? 0 : db.calculateHealthInsurance(taxableIncome);
       // 源泉徴収税額の差引: 確定申告での追加納付額(正)/還付額(負)
-      const withholdingTax = input.withholdingTax;
-      const incomeTaxBalance = incomeTax - withholdingTax;
+      const incomeTaxBalance = incomeTax - input.withholdingTax;
       const totalTax = Math.max(0, incomeTaxBalance) + residentTax + businessTax;
       const refundAmount = Math.max(0, -incomeTaxBalance);
       const totalIncomeBase = isSideBusiness ? salaryIncome + totalIncome : totalIncome;
@@ -798,7 +797,7 @@ export const appRouter = router({
         workStyle: input.workStyle,
         salaryIncome, salaryDeduction, salaryNetIncome,
         // 源泉徴収との精算
-        withholdingTax, incomeTaxBalance, refundAmount,
+        withholdingTax: input.withholdingTax, incomeTaxBalance, refundAmount,
       };
     }),
   }),

@@ -2,7 +2,7 @@ import nodemailer from "nodemailer";
 
 const APP_NAME = "カンタン経理";
 const MAIL_FROM = process.env.SMTP_FROM || "info@sns-tool.online";
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "sorabcjanne1@gmail.com";
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@example.com";
 const PHP_MAIL_URL = "https://sns-tool.online/keiri/server/send_mail.php";
 const PHP_MAIL_KEY = process.env.PHP_MAIL_KEY || "";
 

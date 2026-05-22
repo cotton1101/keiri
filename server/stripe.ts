@@ -5,8 +5,9 @@ import { STRIPE_CONFIG } from "./stripe-products";
 import { sendAdminPlanUpgradeNotification, sendAdminCancellationNotification } from "./mail";
 
 // Initialize Stripe with secret key (lazy - only when key is available)
+// apiVersion を明示し、Stripe 側のデフォルト変更によるサイレントな挙動変化を防ぐ
 const stripe = process.env.STRIPE_SECRET_KEY
-  ? new Stripe(process.env.STRIPE_SECRET_KEY)
+  ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-02-25.clover" })
   : (null as unknown as Stripe);
 
 export const stripeRouter = Router();
