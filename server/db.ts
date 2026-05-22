@@ -1071,17 +1071,26 @@ export async function deleteUser(userId: number) {
   }
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  // Delete related data then user
-  await db.delete(transactions).where(eq(transactions.userId, userId));
-  await db.delete(accounts).where(eq(accounts.userId, userId));
-  await db.delete(clients).where(eq(clients.userId, userId));
-  await db.delete(recurringTransactions).where(eq(recurringTransactions.userId, userId));
-  await db.delete(taxFilings).where(eq(taxFilings.userId, userId));
-  await db.delete(subscriptions).where(eq(subscriptions.userId, userId));
-  await db.delete(emailLogs).where(eq(emailLogs.userId, userId));
-  await db.delete(receipts).where(eq(receipts.userId, userId));
-  await db.delete(businessProfiles).where(eq(businessProfiles.userId, userId));
-  await db.delete(users).where(eq(users.id, userId));
+  // 全関連データの削除を1トランザクションで実行（途中失敗時の孤児データを防止）
+  await db.transaction(async (tx) => {
+    // invoiceItems は invoiceId 参照のため、対象ユーザーの請求書IDを先に取得して削除
+    const userInvoices = await tx.select({ id: invoices.id }).from(invoices).where(eq(invoices.userId, userId));
+    const invoiceIds = userInvoices.map((i) => i.id);
+    if (invoiceIds.length > 0) {
+      await tx.delete(invoiceItems).where(inArray(invoiceItems.invoiceId, invoiceIds));
+    }
+    await tx.delete(invoices).where(eq(invoices.userId, userId));
+    await tx.delete(transactions).where(eq(transactions.userId, userId));
+    await tx.delete(accounts).where(eq(accounts.userId, userId));
+    await tx.delete(clients).where(eq(clients.userId, userId));
+    await tx.delete(recurringTransactions).where(eq(recurringTransactions.userId, userId));
+    await tx.delete(taxFilings).where(eq(taxFilings.userId, userId));
+    await tx.delete(subscriptions).where(eq(subscriptions.userId, userId));
+    await tx.delete(emailLogs).where(eq(emailLogs.userId, userId));
+    await tx.delete(receipts).where(eq(receipts.userId, userId));
+    await tx.delete(businessProfiles).where(eq(businessProfiles.userId, userId));
+    await tx.delete(users).where(eq(users.id, userId));
+  });
 }
 
 // ─── Admin: Stats ───

@@ -29,7 +29,7 @@ export default function AdminUsers() {
     onError: () => toast.error("ロール更新に失敗しました"),
   });
 
-  const deleteUser = trpc.admin.users2.delete.useMutation({
+  const deleteUser = trpc.admin.users.delete.useMutation({
     onSuccess: () => { toast.success("ユーザーを削除しました"); setDeleteTarget(null); refetch(); utils.admin.stats.invalidate(); },
     onError: () => toast.error("削除に失敗しました"),
   });

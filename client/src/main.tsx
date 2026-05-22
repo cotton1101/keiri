@@ -42,6 +42,10 @@ const trpcClient = trpc.createClient({
     httpBatchLink({
       url: `${import.meta.env.BASE_URL}api/trpc`,
       transformer: superjson,
+      headers() {
+        // CSRF 対策: サーバ側ミドルウェアが POST に必須化しているカスタムヘッダ
+        return { "x-requested-with": "XMLHttpRequest" };
+      },
       fetch(input, init) {
         return globalThis.fetch(input, {
           ...(init ?? {}),

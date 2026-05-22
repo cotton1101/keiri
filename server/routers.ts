@@ -73,6 +73,18 @@ function resetRateLimit(key: string): void {
   loginAttempts.delete(key);
 }
 
+// 期限切れエントリを定期的に掃除してメモリリークを防ぐ。
+// TODO: 複数インスタンス運用時は Redis/DB ベースのレート制限に置き換える。
+const RATE_LIMIT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+const rateLimitCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of Array.from(loginAttempts.entries())) {
+    if (now >= entry.resetAt) loginAttempts.delete(key);
+  }
+}, RATE_LIMIT_CLEANUP_INTERVAL_MS);
+// プロセス終了やテスト実行をブロックしないように unref
+rateLimitCleanupTimer.unref?.();
+
 // ─── Security: Origin validation ───
 function validateOrigin(origin: string): string {
   try {
@@ -975,6 +987,15 @@ export const appRouter = router({
         await db.updateUserRole(input.userId, input.role);
         return { success: true };
       }),
+      delete: adminProcedure.input(z.object({
+        userId: z.number(),
+      })).mutation(async ({ ctx, input }) => {
+        if (input.userId === ctx.user.id) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "自分自身を削除することはできません" });
+        }
+        await db.deleteUser(input.userId);
+        return { success: true };
+      }),
     }),
     subscriptions: router({
       list: adminProcedure.input(z.object({
@@ -988,18 +1009,6 @@ export const appRouter = router({
         plan: z.enum(["free", "premium"]),
       })).mutation(async ({ input }) => {
         await db.upsertSubscription(input.userId, input.plan);
-        return { success: true };
-      }),
-    }),
-    // 管理者によるユーザー削除
-    users2: router({
-      delete: adminProcedure.input(z.object({
-        userId: z.number(),
-      })).mutation(async ({ ctx, input }) => {
-        if (input.userId === ctx.user.id) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "自分自身を削除することはできません" });
-        }
-        await db.deleteUser(input.userId);
         return { success: true };
       }),
     }),

@@ -44,7 +44,8 @@ export function getSessionCookieOptions(
   return {
     httpOnly: true,
     path: basePath,
-    sameSite: secure ? "none" : "lax",
+    // 同一ドメイン(/keiri)運用のため lax 固定。CSRF 緩和（none は不要）。
+    sameSite: "lax",
     secure,
   };
 }

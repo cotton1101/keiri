@@ -40,11 +40,22 @@ async function startServer() {
   app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "DENY");
-    res.setHeader("X-XSS-Protection", "1; mode=block");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     res.setHeader("Permissions-Policy", "camera=(self), microphone=(), geolocation=()");
+    // CSP は本番のみ適用（開発は Vite が inline script/eval/ws を使うため）
     if (process.env.NODE_ENV === "production") {
       res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+      res.setHeader("Content-Security-Policy", [
+        "default-src 'self'",
+        "img-src 'self' data: blob: https:",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
+        "script-src 'self' https://js.stripe.com",
+        "connect-src 'self' https://api.stripe.com",
+        "frame-src https://checkout.stripe.com https://billing.stripe.com",
+        "base-uri 'self'",
+        "form-action 'self'",
+      ].join("; "));
     }
     next();
   });
@@ -80,6 +91,14 @@ ${urls.map(u => `  <url>
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // OAuth callback (kept for backward compatibility)
   registerOAuthRoutes(app);
+  // ─── CSRF protection ─── state変更系(POST)にはカスタムヘッダを必須化。
+  // ブラウザの単純リクエストではカスタムヘッダを付けられないため、クロスサイトからの mutation を遮断する。
+  app.use(`${basePath}/api/trpc`, (req, res, next) => {
+    if (req.method === "POST" && req.headers["x-requested-with"] !== "XMLHttpRequest") {
+      return res.status(403).json({ error: "CSRF protection: missing X-Requested-With header" });
+    }
+    next();
+  });
   // tRPC API
   app.use(
     `${basePath}/api/trpc`,
